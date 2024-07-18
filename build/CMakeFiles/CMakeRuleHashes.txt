@@ -1,0 +1,5 @@
+# Hashes of file build rules.
+d8f221d08cb7a24b2a95c3fadaab98d7 /home/xzl/work/box64/box64/src/git_head.h
+400b02e4314de30c9ce6b8ecb18d0bf2 /home/xzl/work/box64/box64/src/wrapped/generated/functions_list.txt
+d567552b41d1d6052fd225f58a7ff34e CMakeFiles/WRAPPERS
+76f547d272f8f69436f8fc555f3b7cee CMakeFiles/uninstall

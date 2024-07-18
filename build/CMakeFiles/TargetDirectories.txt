@@ -1,0 +1,9 @@
+/home/xzl/work/box64/box64/build/CMakeFiles/WRAPPERS.dir
+/home/xzl/work/box64/box64/build/CMakeFiles/interpreter.dir
+/home/xzl/work/box64/box64/build/CMakeFiles/box64.dir
+/home/xzl/work/box64/box64/build/CMakeFiles/uninstall.dir
+/home/xzl/work/box64/box64/build/CMakeFiles/package.dir
+/home/xzl/work/box64/box64/build/CMakeFiles/package_source.dir
+/home/xzl/work/box64/box64/build/CMakeFiles/test.dir
+/home/xzl/work/box64/box64/build/CMakeFiles/edit_cache.dir
+/home/xzl/work/box64/box64/build/CMakeFiles/rebuild_cache.dir
