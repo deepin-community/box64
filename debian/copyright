@@ -1,22 +1,159 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: template-repository
-Source: https://github.com/deepin-community/template-repository
+Upstream-Name: box64
+Upstream-Contact: Sebastien Chevalier <ptitseb@box86.org>
+Source: https://github.com/ptitSeb/box64
+Files-Excluded:
+ .github
+ .gitignore
+ .travis.yml
+ LLVMprivateGenerator
+ debian
+ pkgbuilds
+ src/wrapped/generated
+ tests/benchfloat_android
+ tests/extensions/mmx_android
+ tests/bash
+ tests/benchfloat
+ tests/extensions/mmx
+ tests/test01
+ tests/test01_android
+ tests/test02
+ tests/test02_android
+ tests/test03
+ tests/test03_android
+ tests/test04
+ tests/test04_android
+ tests/test05
+ tests/test05_android
+ tests/test06
+ tests/test06_android
+ tests/test07
+ tests/test07_android
+ tests/test08
+ tests/test08_android
+ tests/test09
+ tests/test09_android
+ tests/test10
+ tests/test10_android
+ tests/test11
+ tests/test11_android
+ tests/test12
+ tests/test12_android
+ tests/test13
+ tests/test14
+ tests/test14_android
+ tests/test15
+ tests/test15_android
+ tests/test16
+ tests/test16_android
+ tests/test17
+ tests/test17_android
+ tests/test18
+ tests/test18_android
+ tests/test19
+ tests/test20
+ tests/test20_android
+ tests/test21
+ tests/test21_android
+ tests/test22
+ tests/test22_android
+ tests/test23
+ tests/test23_android
+ tests/test24
+ tests/test24_android
+ tests/test25
+ tests/test25_android
+ tests/test26
+ tests/test26_android
+ tests/test27
+ tests/test27_android
+ tests/test28
+ tests/test28_android
+ tests/test29
+ tests/test29_android
+ tests/test30
+ x64lib
 
 Files: *
-Copyright: 2023 Tsic404 <liuheng@deepin.org>
-License: GPL-2+
- This package is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2 of the License, or
- (at your option) any later version.
+Copyright: © 2022 Sebastien Chevalier <ptitseb@box86.org>
+License: Expat
+
+Files: src/emu/x64primop.c
+Copyright:
+ 1996-1999 SciTech Software, Inc.
+ David Mosberger-Tang
+ 1999 Egbert Eich
+ 2007-2017 SUSE LINUX GmbH; Author: Steffen Winterfeldt
+License: MIT
+ Permission to use, copy, modify, distribute, and sell this software and
+ its documentation for any purpose is hereby granted without fee,
+ provided that the above copyright notice appear in all copies and that
+ both that copyright notice and this permission notice appear in
+ supporting documentation, and that the name of the authors not be used
+ in advertising or publicity pertaining to distribution of the software
+ without specific, written prior permission.  The authors makes no
+ representations about the suitability of this software for any purpose.
+ It is provided "as is" without express or implied warranty.
  .
- This package is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
+ THE AUTHORS DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+ INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
+ EVENT SHALL THE AUTHORS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+ CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF
+ USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+ PERFORMANCE OF THIS SOFTWARE.
+
+
+Files: src/include/khash.h
+Copyright: Copyright (c) 2008, 2009, 2011 by Attractive Chaos <attractor@live.co.uk>
+License: Expat
+
+Files:
+ src/wrapped/wrappedd3dadapter9_gen.h
+ src/wrapped/wrappedd3dadapter9_vtable.h
+Copyright: Copyright 2011 Joakim Sindholt <opensource@zhasha.com>
+License: Expat
+
+Files: src/wrapped/SDL_dynapi_procs.h
+Copyright: Copyright (C) 1997-2021 Sam Lantinga <slouken@libsdl.org>
+License: Zlib
+ This software is provided 'as-is', without any express or implied
+ warranty.  In no event will the authors be held liable for any damages
+ arising from the use of this software.
  .
- You should have received a copy of the GNU General Public License
- along with this program. If not, see <https://www.gnu.org/licenses/>
+ Permission is granted to anyone to use this software for any purpose,
+ including commercial applications, and to alter it and redistribute it
+ freely, subject to the following restrictions:
  .
- On Debian systems, the complete text of the GNU General
- Public License version 2 can be found in "/usr/share/common-licenses/GPL-2".
+ 1. The origin of this software must not be misrepresented; you must not
+    claim that you wrote the original software. If you use this software
+    in a product, an acknowledgment in the product documentation would be
+    appreciated but is not required.
+ 2. Altered source versions must be plainly marked as such, and must not be
+    misrepresented as being the original software.
+ 3. This notice may not be removed or altered from any source distribution.
+
+Files: debian/*
+Copyright:
+ © 2022 Sebastien Chevalier <ptitseb@box86.org>
+ © 2022 Johannes Schauer Marin Rodrigues <josch@debian.org>
+License: Expat
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in
+ all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ THE SOFTWARE.

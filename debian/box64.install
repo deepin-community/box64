@@ -1,0 +1,10 @@
+#!/usr/bin/dh-exec
+[arm64] debian/tmp.ARM_DYNAREC/usr/bin/box64 /usr/bin
+[arm64] debian/tmp.ARM_DYNAREC/etc/box64.box64rc /etc
+[arm64] debian/tmp.ARM_DYNAREC/etc/binfmt.d/box64.conf /usr/lib/binfmt.d
+[ppc64el] debian/tmp.PPC64LE/usr/bin/box64 /usr/bin
+[ppc64el] debian/tmp.PPC64LE/etc/box64.box64rc /etc
+[ppc64el] debian/tmp.PPC64LE/etc/binfmt.d/box64.conf /usr/lib/binfmt.d
+[riscv64] debian/tmp.RV64/usr/bin/box64 /usr/bin
+[riscv64] debian/tmp.RV64/etc/box64.box64rc /etc
+[riscv64] debian/tmp.RV64/etc/binfmt.d/box64.conf /usr/lib/binfmt.d

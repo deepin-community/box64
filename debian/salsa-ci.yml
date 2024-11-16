@@ -1,0 +1,45 @@
+---
+include:
+  - https://salsa.debian.org/salsa-ci-team/pipeline/raw/master/recipes/debian.yml
+
+variables:
+  SALSA_CI_DISABLE_BUILD_PACKAGE_I386: 1
+  # CPPFLAGS are not passed to *.S input files
+  # "Building C object" lines are false positives #1018041
+  SALSA_CI_BLHC_ARGS: "--ignore-line .*\\s-c\\s\\S+\\.S --ignore-line \\[\\s+[0-9]+%\\]\\sBuilding\\sC\\sobject\\sCMakeFiles/\\S+\\.c\\.o"
+
+build:
+  image: ${SALSA_CI_IMAGES}/arm64v8/base:${RELEASE}
+  variables:
+    BUILD_ARCH: 'arm64'
+  tags:
+    - arm64
+
+autopkgtest:
+  image: ${SALSA_CI_IMAGES}/arm64v8/autopkgtest
+  tags:
+    - arm64
+
+reprotest:
+  image: ${SALSA_CI_IMAGES}/arm64v8/reprotest:latest
+  tags:
+    - arm64
+
+piuparts:
+  image: ${SALSA_CI_IMAGES}/arm64v8/piuparts:latest
+  variables:
+    SALSA_CI_IMAGES_BASE: ${SALSA_CI_IMAGES}/arm64v8/base:${RELEASE}
+  tags:
+    - arm64
+
+blhc:
+  image: ${SALSA_CI_IMAGES}/arm64v8/blhc:latest
+  tags:
+    - arm64
+
+test-build-any:
+  image: ${SALSA_CI_IMAGES}/arm64v8/base:${RELEASE}
+  variables:
+    BUILD_ARCH: 'arm64'
+  tags:
+    - arm64

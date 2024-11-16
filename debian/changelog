@@ -1,5 +1,61 @@
-template-repository (1.0-1) unstable; urgency=medium
+box64 (0.3.0+dfsg-1) unstable; urgency=medium
 
-  * Initial release
+  * New upstream version 0.3.0+dfsg
+  * debian/copyright: exclude files for 0.3.0 release
+  * add spelling.patch
+  * use box64.pod from upstream
+  * install CHANGELOG.md and COMPILE.md as docs
 
- -- Tsic404 <liuheng@deepin.org>  Sat, 28 Jan 2023 13:46:49 +0800
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Wed, 10 Jul 2024 10:52:34 +0200
+
+box64 (0.2.6+dfsg-3) unstable; urgency=medium
+
+  * debian/box64.install: fix typo PPL64LE->PPC64LE (closes: #1061457)
+
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Wed, 24 Jan 2024 22:25:30 +0100
+
+box64 (0.2.6+dfsg-2) unstable; urgency=medium
+
+  * debian/box64.install: fix typo tmp.RV644 -> tmp.RV64
+
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Sun, 24 Dec 2023 23:39:56 +0100
+
+box64 (0.2.6+dfsg-1) unstable; urgency=medium
+
+  * New upstream version 0.2.6+dfsg
+  * install box64.conf into /usr/lib/binfmt.d which is where it triggers
+    systemd-binfmt restart during installation
+
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Sun, 24 Dec 2023 18:59:12 +0100
+
+box64 (0.2.4+dfsg-1) unstable; urgency=medium
+
+  * New upstream version 0.2.4+dfsg
+  * drop patches
+  * add debian/salsa-ci.yml
+  * add autopkgtest
+  * debian/rules: run loops with -e
+  * debian/rules: build with cmake+ninja
+  * debian/control: add B-D on ninja-build
+
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Sat, 26 Aug 2023 00:46:05 +0200
+
+box64 (0.2.2+dfsg-3) unstable; urgency=medium
+
+  * debian/control: fix dependencies
+  * debian/salsa-ci.yml: disable amd64 and enable arm64
+  * add use-cross-libs.patch
+
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Fri, 21 Jul 2023 08:19:36 +0200
+
+box64 (0.2.2+dfsg-2) unstable; urgency=medium
+
+  * debian/copyright: add missing entries
+
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Sun, 16 Jul 2023 23:55:31 +0200
+
+box64 (0.2.2+dfsg-1) unstable; urgency=medium
+
+  * initial upload
+
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Thu, 06 Jul 2023 23:12:06 +0200

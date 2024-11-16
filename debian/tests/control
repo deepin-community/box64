@@ -1,0 +1,3 @@
+Test-Command: box64 --version
+Depends: box64
+Restrictions: allow-stderr, superficial
