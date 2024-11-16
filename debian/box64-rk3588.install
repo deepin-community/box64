@@ -1,0 +1,3 @@
+debian/tmp.RK3588/etc/box64.box64rc /etc
+debian/tmp.RK3588/etc/binfmt.d/box64.conf /usr/lib/binfmt.d
+debian/tmp.RK3588/usr/bin/box64 /usr/bin

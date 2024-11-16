@@ -1,0 +1,465 @@
+From 0ff8846d7f56aa4d536c2f74893c75d961b44d4c Mon Sep 17 00:00:00 2001
+From: Johannes Schauer Marin Rodrigues <josch@mister-muffin.de>
+Date: Wed, 10 Jul 2024 10:49:28 +0200
+Subject: [PATCH] fix some spelling
+
+---
+ docs/USAGE.md                               | 14 +++++------
+ docs/box64.pod                              | 14 +++++------
+ src/core.c                                  |  4 +--
+ src/custommem.c                             |  2 +-
+ src/dynarec/arm64/dynarec_arm64_00.c        |  2 +-
+ src/dynarec/arm64/dynarec_arm64_66.c        |  2 +-
+ src/dynarec/arm64/dynarec_arm64_d9.c        |  2 +-
+ src/dynarec/arm64/dynarec_arm64_functions.c |  4 +--
+ src/dynarec/arm64/dynarec_arm64_functions.h |  2 +-
+ src/dynarec/arm64/dynarec_arm64_helper.h    | 28 ++++++++++-----------
+ src/dynarec/dynarec_native_functions.c      |  2 +-
+ src/dynarec/dynarec_native_functions.h      |  2 +-
+ src/dynarec/rv64/dynarec_rv64_00_2.c        |  2 +-
+ src/dynarec/rv64/dynarec_rv64_66.c          |  2 +-
+ src/emu/x64syscall.c                        |  4 +--
+ src/libtools/signals.c                      |  2 +-
+ src/tools/rcfile.c                          |  2 +-
+ 17 files changed, 45 insertions(+), 45 deletions(-)
+
+diff --git a/docs/USAGE.md b/docs/USAGE.md
+index bdac4b15..3b98b973 100644
+--- a/docs/USAGE.md
++++ b/docs/USAGE.md
+@@ -143,7 +143,7 @@ Enables/Disables trace for generated code.
+  * 1 : Enable trace for generated code (like regular Trace, this will slow down the program a lot and generate huge logs).
+ 
+ #### BOX64_NODYNAREC  *
+-Forbid dynablock creation in the interval specified (helpfull for debugging behaviour difference between Dynarec and Interpreter)
++Forbid dynablock creation in the interval specified (helpful for debugging behaviour difference between Dynarec and Interpreter)
+  * 0xXXXXXXXX-0xYYYYYYYY : define the interval where dynablock cannot start (inclusive-exclusive)
+ 
+ #### BOX64_DYNAREC_TEST *
+@@ -214,7 +214,7 @@ Detect libjvm and apply conservative settings. Obsolete, use BOX64_JVM instead.
+ * 1 : Detect libjvm, and apply BIGBLOCK=0 STRONGMEM=1 SSE42=0 if detected (Default)
+ 
+ #### BOX64_DYNAREC_WAIT *
+-Behavior with FillBlock is not availble (FillBlock build Dynarec blocks and is not multithreaded)
++Behavior with FillBlock is not available (FillBlock build Dynarec blocks and is not multithreaded)
+ * 0 : Dynarec will not wait for FillBlock to ready and use Interpreter instead (might speedup a bit massive multithread or JIT programs)
+ * 1 : Dynarec will wait for FillBlock to be ready (Default)
+ 
+@@ -270,12 +270,12 @@ Need a workaround for SDL_GetJoystickGUIDInfo function for wrapped SDL2
+ 
+ #### BOX64_LD_PRELOAD
+  * XXXX[:YYYYY] force loading XXXX (and YYYY...) libraries with the binary
+- PreLoaded libs can be emulated or native, and are treated the same way as if they were comming from the binary
++ PreLoaded libs can be emulated or native, and are treated the same way as if they were coming from the binary
+  
+ #### BOX64_EMULATED_LIBS *
+  * XXXX[:YYYYY] force lib XXXX (and YYYY...) to be emulated (and not wrapped)
+ Some games uses an old version of some libraries, with an ABI incompatible with native version.
+-Note that LittleInferno for example is auto detected, and libvorbis.so.0 is automatical added to emulated libs, and same for Don't Starve (and Together / Server variant) that use an old SDL2 too
++Note that LittleInferno for example is auto detected, and libvorbis.so.0 is automatically added to emulated libs, and same for Don't Starve (and Together / Server variant) that use an old SDL2 too
+ 
+ #### BOX64_ALLOWMISSINGLIBS *
+ Allow Box64 to continue even if a library is missing.
+@@ -289,13 +289,13 @@ Box64 will use wrapped libs even if the lib is specified with absolute path
+ 
+ #### BOX64_PREFER_EMULATED *
+ Box64 will prefer emulated libs first (execpt for glibc, alsa, pulse, GL, vulkan and X11
+- * 0 : Native libs are prefered (Default.)
+- * 1 : Emulated libs are prefered (Default for program running inside pressure-vessel)
++ * 0 : Native libs are preferred (Default.)
++ * 1 : Emulated libs are preferred (Default for program running inside pressure-vessel)
+ 
+ #### BOX64_CRASHHANDLER *
+ Box64 will use a dummy crashhandler.so library
+  * 0 : Use Emulated crashhandler.so library if needed
+- * 1 : Use an internal dummy (completly empty) crashhandler.so library (defaut)
++ * 1 : Use an internal dummy (completely empty) crashhandler.so library (default)
+ 
+ #### BOX64_MALLOC_HACK *
+ How Box64 will handle hooking of malloc operators
+diff --git a/docs/box64.pod b/docs/box64.pod
+index 7a99dc5b..d946dfcd 100644
+--- a/docs/box64.pod
++++ b/docs/box64.pod
+@@ -77,7 +77,7 @@ When set to 1, don't prints the banner including version and build.
+ =item B<BOX64_LD_PRELOAD>=I<lib1>[:I<lib2>:...]
+ 
+ Force loading libraries with the  binary. PreLoaded libs can be emulated or
+-native, and are treated the same way as if they were comming from the binary.
++native, and are treated the same way as if they were coming from the binary.
+ 
+ =item B<BOX64_ENV>=I<env=val>
+ 
+@@ -263,7 +263,7 @@ down the program a lot and generate huge logs.
+ 
+ =item B<BOX64_NODYNAREC>=I<0xXXXXXXXX-0xYYYYYYYY>
+ 
+-Forbid dynablock creation in the interval specified (helpfull for debugging
++Forbid dynablock creation in the interval specified (helpful for debugging
+ behaviour difference between Dynarec and Interpreter)
+ 
+ =item B<BOX64_DYNAREC_TEST>=I<0|1>
+@@ -343,7 +343,7 @@ Detect MonoBleedingEdge and apply conservative settings
+ 
+ =item B<BOX64_DYNAREC_WAIT>=I<0|1>
+ 
+-Behavior with FillBlock is not availble (FillBlock build Dynarec blocks and is not multithreaded)
++Behavior with FillBlock is not available (FillBlock build Dynarec blocks and is not multithreaded)
+ 
+     * 0 : Dynarec will not wait for FillBlock to ready and use Interpreter instead (might speedup a bit massive multithread or JIT programs)
+     * 1 : Dynarec will wait for FillBlock to be ready (Default)
+@@ -388,7 +388,7 @@ You can also use B<SDL_VIDEO_GL_DRIVER>
+ Force lib XXXX (and YYYY...) to be emulated (and not wrapped) Some games uses
+ an old version of some libraries, with an ABI incompatible with native version.
+ Note that LittleInferno for example is auto detected, and libvorbis.so.0 is
+-automatical added to emulated libs, and same for Don't Starve (and Together /
++automatically added to emulated libs, and same for Don't Starve (and Together /
+ Server variant) that use an old SDL2 too
+ 
+ =item B<BOX64_ALLOWMISSINGLIBS>=I<0|1>
+@@ -410,15 +410,15 @@ Box64 will use wrapped libs even if the lib is specified with absolute path
+ Box64 will prefer emulated libs first (execpt for glibc, alsa, pulse, GL,
+ vulkan and X11
+ 
+-   * 0 : Native libs are prefered (Default.)
+-   * 1 : Emulated libs are prefered (Default for program running inside pressure-vessel)
++   * 0 : Native libs are preferred (Default.)
++   * 1 : Emulated libs are preferred (Default for program running inside pressure-vessel)
+ 
+ =item B<BOX64_CRASHHANDLER>=I<0|1>
+ 
+ Box64 will use a dummy crashhandler.so library
+ 
+     * 0 : Use Emulated crashhandler.so library if needed
+-    * 1 : Use an internal dummy (completly empty) crashhandler.so library (defaut)
++    * 1 : Use an internal dummy (completely empty) crashhandler.so library (default)
+ 
+ =item B<BOX64_MALLOC_HACK>=I<0|1|2>
+ 
+diff --git a/src/core.c b/src/core.c
+index 9ea4632b..1a9262c4 100644
+--- a/src/core.c
++++ b/src/core.c
+@@ -1423,7 +1423,7 @@ void LoadEnvVars(box64context_t *context)
+     if(getenv("BOX64_SYNC_ROUNDING")) {
+         if (strcmp(getenv("BOX64_SYNC_ROUNDING"), "1")==0) {
+             box64_sync_rounding = 1;
+-            printf_log(LOG_INFO, "BOX64: Rouding mode with be synced with fesetround/fegetround\n");
++            printf_log(LOG_INFO, "BOX64: Rounding mode will be synced with fesetround/fegetround\n");
+         }
+     }
+     if(getenv("BOX64_PREFER_WRAPPED")) {
+@@ -1672,7 +1672,7 @@ static void add_argv(const char* what) {
+         if(!strcmp(my_context->argv[i], what))
+             there = 1;
+     if(!there) {
+-        printf_log(LOG_INFO, "Inserting \"%s\" to the argments\n", what);
++        printf_log(LOG_INFO, "Inserting \"%s\" to the arguments\n", what);
+         my_context->argv = (char**)box_realloc(my_context->argv, (my_context->argc+1)*sizeof(char*));
+         my_context->argv[my_context->argc] = box_strdup(what);
+         my_context->argc++;
+diff --git a/src/custommem.c b/src/custommem.c
+index 28a0fdee..c8f8db66 100644
+--- a/src/custommem.c
++++ b/src/custommem.c
+@@ -304,7 +304,7 @@ int printBlockCoherent(int i)
+         m = n;
+     }
+     if(m!=last) {
+-        printf_log(LOG_NONE, "Last block %p is behond expexted block %p for block %d\n", m, last, i);
++        printf_log(LOG_NONE, "Last block %p is beyond expected block %p for block %d\n", m, last, i);
+         ret = 0;
+     }
+ 
+diff --git a/src/dynarec/arm64/dynarec_arm64_00.c b/src/dynarec/arm64/dynarec_arm64_00.c
+index cd279330..5a638072 100644
+--- a/src/dynarec/arm64/dynarec_arm64_00.c
++++ b/src/dynarec/arm64/dynarec_arm64_00.c
+@@ -1498,7 +1498,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
+             SET_DFNONE(x1);
+             if(box64_wine) {    // should this be done all the time?
+                 TBZ_NEXT(xFlags, F_TF);
+-                // go to epilog, TF should trigger at end of next opcode, so using Interpretor only
++                // go to epilog, TF should trigger at end of next opcode, so using Interpreter only
+                 jump_to_epilog(dyn, addr, 0, ninst);
+             }
+             break;
+diff --git a/src/dynarec/arm64/dynarec_arm64_66.c b/src/dynarec/arm64/dynarec_arm64_66.c
+index 12efb37b..0689651e 100644
+--- a/src/dynarec/arm64/dynarec_arm64_66.c
++++ b/src/dynarec/arm64/dynarec_arm64_66.c
+@@ -728,7 +728,7 @@ uintptr_t dynarec64_66(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
+             SET_DFNONE(x1);
+             if(box64_wine) {    // should this be done all the time?
+                 TBZ_NEXT(xFlags, F_TF);
+-                // go to epilog, TF should trigger at end of next opcode, so using Interpretor only
++                // go to epilog, TF should trigger at end of next opcode, so using Interpreter only
+                 jump_to_epilog(dyn, addr, 0, ninst);
+             }
+             break;
+diff --git a/src/dynarec/arm64/dynarec_arm64_d9.c b/src/dynarec/arm64/dynarec_arm64_d9.c
+index 53c3ad6e..9c8610be 100644
+--- a/src/dynarec/arm64/dynarec_arm64_d9.c
++++ b/src/dynarec/arm64/dynarec_arm64_d9.c
+@@ -294,7 +294,7 @@ uintptr_t dynarec64_D9(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
+             CALL(native_ftan, -1);
+             x87_unstackcount(dyn, ninst, x1, i1);
+             if(PK(0)==0xdd && PK(1)==0xd8) {
+-                MESSAGE(LOG_DUMP, "Optimized next DD D8 fstp st0, st0, not emiting 1\n");
++                MESSAGE(LOG_DUMP, "Optimized next DD D8 fstp st0, st0, not emitting 1\n");
+                 u8 = F8;
+                 u8 = F8;
+             } else {
+diff --git a/src/dynarec/arm64/dynarec_arm64_functions.c b/src/dynarec/arm64/dynarec_arm64_functions.c
+index 8fd0929e..ee1104e9 100644
+--- a/src/dynarec/arm64/dynarec_arm64_functions.c
++++ b/src/dynarec/arm64/dynarec_arm64_functions.c
+@@ -598,7 +598,7 @@ void neoncacheUnwind(neoncache_t* cache)
+ 
+ #define F8      *(uint8_t*)(addr++)
+ #define F32S64  (uint64_t)(int64_t)*(int32_t*)(addr+=4, addr-4)
+-// Get if ED will have the correct parity. Not emiting anything. Parity is 2 for DWORD or 3 for QWORD
++// Get if ED will have the correct parity. Not emitting anything. Parity is 2 for DWORD or 3 for QWORD
+ int getedparity(dynarec_arm_t* dyn, int ninst, uintptr_t addr, uint8_t nextop, int parity, int delta)
+ {
+     (void)dyn; (void)ninst;
+@@ -794,4 +794,4 @@ void fpu_reset_ninst(dynarec_native_t* dyn, int ninst)
+ int fpu_is_st_freed(dynarec_native_t* dyn, int ninst, int st)
+ {
+     return (dyn->n.tags&(0b11<<(st*2)))?1:0;
+-}
+\ No newline at end of file
++}
+diff --git a/src/dynarec/arm64/dynarec_arm64_functions.h b/src/dynarec/arm64/dynarec_arm64_functions.h
+index b6c95904..e87da74c 100644
+--- a/src/dynarec/arm64/dynarec_arm64_functions.h
++++ b/src/dynarec/arm64/dynarec_arm64_functions.h
+@@ -58,7 +58,7 @@ int fpuCacheNeedsTransform(dynarec_arm_t* dyn, int ninst);
+ // Undo the changes of a neoncache to get the status before the instruction
+ void neoncacheUnwind(neoncache_t* cache);
+ 
+-// Get if ED will have the correct parity. Not emiting anything. Parity is 2 for DWORD or 3 for QWORD
++// Get if ED will have the correct parity. Not emitting anything. Parity is 2 for DWORD or 3 for QWORD
+ int getedparity(dynarec_native_t* dyn, int ninst, uintptr_t addr, uint8_t nextop, int parity, int delta);
+ 
+ const char* getCacheName(int t, int n);
+diff --git a/src/dynarec/arm64/dynarec_arm64_helper.h b/src/dynarec/arm64/dynarec_arm64_helper.h
+index 769082c3..dbc3c29f 100644
+--- a/src/dynarec/arm64/dynarec_arm64_helper.h
++++ b/src/dynarec/arm64/dynarec_arm64_helper.h
+@@ -459,7 +459,7 @@
+ #define GETVX_empty(a)                  \
+     a = sse_get_reg_empty(dyn, ninst, x1, vex.v)
+ 
+-// Get empty VX, and non-writen  EX
++// Get empty VX, and non-written  EX
+ #define GETVX_empty_EX(vx, ex, D)           \
+     GETEX_Y(ex, 0, D);                      \
+     GETVX_empty(vx)
+@@ -484,29 +484,29 @@
+     b = ymm_get_reg(dyn, ninst, x1, vex.v, w2, gd, k1, k2); \
+     a = ymm_get_reg_empty(dyn, ninst, x1, gd, vex.v, k1, k2)
+ 
+-// Get empty GX, and non-writen VX and EX
++// Get empty GX, and non-written VX and EX
+ #define GETGX_empty_VXEX(gx, vx, ex, D)     \
+     GETVX(vx, 0);                           \
+     GETEX_Y(ex, 0, D);                      \
+     GETGX_empty(gx)
+ 
+-// Get empty GX, and non-writen EX
++// Get empty GX, and non-written EX
+ #define GETGX_empty_EX(gx, ex, D)           \
+     GETEX_Y(ex, 0, D);                      \
+     GETGX_empty(gx)
+ 
+-// Get empty GX, and non-writen VX
++// Get empty GX, and non-written VX
+ #define GETGX_empty_VX(gx, vx)              \
+     GETVX(vx, 0);                           \
+     GETGX_empty(gx)
+ 
+-// Get EX and and non-writen VX and GX
++// Get EX and and non-written VX and GX
+ #define GETGXVXEX(gx, vx, ex, D)            \
+     GETVX(vx, 0);                           \
+     GETEX_Y(ex, 1, D);                      \
+     GETGX(gx, 0)
+ 
+-// Get GX and and non-writen VX and EX
++// Get GX and and non-written VX and EX
+ #define GETGX_VXEX(gx, vx, ex, D)            \
+     GETVX(vx, 0);                           \
+     GETEX_Y(ex, 0, D);                      \
+@@ -517,7 +517,7 @@
+     GETGX(gx, 0);                           \
+     GETEX_empty_Y(ex, D);
+ 
+-// Get empty GY, and non-writen VY and EY
++// Get empty GY, and non-written VY and EY
+ #define GETGY_empty_VYEY(gy, vy, ey)                                                            \
+     vy = ymm_get_reg(dyn, ninst, x1, vex.v, 0, gd, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1);    \
+     if(MODREG)                                                                                  \
+@@ -526,7 +526,7 @@
+         VLDR128_U12(ey, ed, fixedaddress+16);                                                   \
+     gy = ymm_get_reg_empty(dyn, ninst, x1, gd, vex.v, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1)
+ 
+-// Get EY and non-writen VY and GY
++// Get EY and non-written VY and GY
+ #define GETGYVYEY(gy, vy, ey)                                                                   \
+     vy = ymm_get_reg(dyn, ninst, x1, vex.v, 0, gd, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1);    \
+     if(MODREG)                                                                                  \
+@@ -535,7 +535,7 @@
+         VLDR128_U12(ey, ed, fixedaddress+16);                                                   \
+     gy = ymm_get_reg(dyn, ninst, x1, gd, 0, vex.v, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1)
+ 
+-// Get GY and non-writen VY and EY
++// Get GY and non-written VY and EY
+ #define GETGY_VYEY(gy, vy, ey)                                                                  \
+     vy = ymm_get_reg(dyn, ninst, x1, vex.v, 0, gd, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1);    \
+     if(MODREG)                                                                                  \
+@@ -544,14 +544,14 @@
+         VLDR128_U12(ey, ed, fixedaddress+16);                                                   \
+     gy = ymm_get_reg(dyn, ninst, x1, gd, 1, vex.v, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1)
+ 
+-// Get empty EY and non-writen VY and GY
++// Get empty EY and non-written VY and GY
+ #define GETGYVYEY_empty(gy, vy, ey)                                                             \
+     vy = ymm_get_reg(dyn, ninst, x1, vex.v, 0, gd, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1);    \
+     gy = ymm_get_reg(dyn, ninst, x1, gd, 0, vex.v, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1);    \
+     if(MODREG)                                                                                  \
+         ey = ymm_get_reg_empty(dyn, ninst, x1, (nextop&7)+(rex.b<<3), gd, vex.v, -1)
+ 
+-// Get EY and non-writen GY
++// Get EY and non-written GY
+ #define GETGYEY(gy, ey)                                                                         \
+     if(MODREG)                                                                                  \
+         ey = ymm_get_reg(dyn, ninst, x1, (nextop&7)+(rex.b<<3), 1, gd, -1, -1);                 \
+@@ -573,13 +573,13 @@
+     else                                                                                        \
+         VLDR128_U12(ey, ed, fixedaddress+16);                                                   \
+ 
+-// Get empty EY and non-writen GY
++// Get empty EY and non-written GY
+ #define GETGYEY_empty(gy, ey)                                                                   \
+     gy = ymm_get_reg(dyn, ninst, x1, gd, 0, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1, -1);       \
+     if(MODREG)                                                                                  \
+         ey = ymm_get_reg_empty(dyn, ninst, x1, (nextop&7)+(rex.b<<3), gd, -1, -1)
+ 
+-// Get empty GY, and non-writen EY
++// Get empty GY, and non-written EY
+ #define GETGY_empty_EY(gy, ey)                                                      \
+     if(MODREG)                                                                      \
+         ey = ymm_get_reg(dyn, ninst, x1, (nextop&7)+(rex.b<<3), 0, gd, -1, -1);     \
+@@ -587,7 +587,7 @@
+         VLDR128_U12(ey, ed, fixedaddress+16);                                       \
+     gy = ymm_get_reg_empty(dyn, ninst, x1, gd, (MODREG)?((nextop&7)+(rex.b<<3)):-1, -1, -1)
+ 
+-// Get empty VY, and non-writen EY
++// Get empty VY, and non-written EY
+ #define GETVY_empty_EY(vy, ey)                                                      \
+     if(MODREG)                                                                      \
+         ey = ymm_get_reg(dyn, ninst, x1, (nextop&7)+(rex.b<<3), 0, vex.v, -1, -1);  \
+diff --git a/src/dynarec/dynarec_native_functions.c b/src/dynarec/dynarec_native_functions.c
+index 219fd413..6a118dfa 100644
+--- a/src/dynarec/dynarec_native_functions.c
++++ b/src/dynarec/dynarec_native_functions.c
+@@ -584,7 +584,7 @@ uintptr_t fakeed(dynarec_native_t* dyn, uintptr_t addr, int ninst, uint8_t nexto
+     }
+     return addr;
+ }
+-// return Ib on a mod/rm opcode without emiting anything
++// return Ib on a mod/rm opcode without emitting anything
+ uint8_t geted_ib(dynarec_native_t* dyn, uintptr_t addr, int ninst, uint8_t nextop)
+ {
+     addr = fakeed(dyn, addr, ninst, nextop);
+diff --git a/src/dynarec/dynarec_native_functions.h b/src/dynarec/dynarec_native_functions.h
+index 1072a201..e9cff961 100644
+--- a/src/dynarec/dynarec_native_functions.h
++++ b/src/dynarec/dynarec_native_functions.h
+@@ -68,7 +68,7 @@ int getNominalPred(dynarec_native_t* dyn, int ninst);
+ 
+ // Do the GETED, but don't emit anything...
+ uintptr_t fakeed(dynarec_native_t* dyn, uintptr_t addr, int ninst, uint8_t nextop);
+-// return Ib on a mod/rm opcode without emiting anything
++// return Ib on a mod/rm opcode without emitting anything
+ uint8_t geted_ib(dynarec_native_t* dyn, uintptr_t addr, int ninst, uint8_t nextop);
+ 
+ // Is what pointed at addr a native call? And if yes, to what function?
+diff --git a/src/dynarec/rv64/dynarec_rv64_00_2.c b/src/dynarec/rv64/dynarec_rv64_00_2.c
+index 1232a973..7bf4a342 100644
+--- a/src/dynarec/rv64/dynarec_rv64_00_2.c
++++ b/src/dynarec/rv64/dynarec_rv64_00_2.c
+@@ -529,7 +529,7 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int
+             if(box64_wine) {    // should this be done all the time?
+                 ANDI(x1, xFlags, 1 << F_TF);
+                 CBZ_NEXT(x1);
+-                // go to epilog, TF should trigger at end of next opcode, so using Interpretor only
++                // go to epilog, TF should trigger at end of next opcode, so using Interpreter only
+                 jump_to_epilog(dyn, addr, 0, ninst);
+             }
+             break;
+diff --git a/src/dynarec/rv64/dynarec_rv64_66.c b/src/dynarec/rv64/dynarec_rv64_66.c
+index b0e45569..e786da98 100644
+--- a/src/dynarec/rv64/dynarec_rv64_66.c
++++ b/src/dynarec/rv64/dynarec_rv64_66.c
+@@ -701,7 +701,7 @@ uintptr_t dynarec64_66(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
+             if (box64_wine) { // should this be done all the time?
+                 ANDI(x1, xFlags, 1 << F_TF);
+                 CBZ_NEXT(x1);
+-                // go to epilog, TF should trigger at end of next opcode, so using Interpretor only
++                // go to epilog, TF should trigger at end of next opcode, so using Interpreter only
+                 jump_to_epilog(dyn, addr, 0, ninst);
+             }
+             break;
+diff --git a/src/emu/x64syscall.c b/src/emu/x64syscall.c
+index 9e30045e..85eebe70 100644
+--- a/src/emu/x64syscall.c
++++ b/src/emu/x64syscall.c
+@@ -776,7 +776,7 @@ void EXPORT x64Syscall(x64emu_t *emu)
+                 sigset_t * set = (sigset_t *)R_RSI;
+                 if(sigismember(set, SIGSEGV)) {
+                     sigdelset(set, SIGSEGV);
+-                    printf_log(LOG_INFO, "Warning, signalfd on SIGSEGV unsuported\n");
++                    printf_log(LOG_INFO, "Warning, signalfd on SIGSEGV unsupported\n");
+                 }
+                 S_RAX = signalfd(S_EDI, set, 0);
+                 if(S_RAX==-1)
+@@ -1060,7 +1060,7 @@ long EXPORT my_syscall(x64emu_t *emu)
+                 sigset_t * set = (sigset_t *)R_RDX;
+                 if(sigismember(set, SIGSEGV)) {
+                     sigdelset(set, SIGSEGV);
+-                    printf_log(LOG_INFO, "Warning, signalfd on SIGSEGV unsuported\n");
++                    printf_log(LOG_INFO, "Warning, signalfd on SIGSEGV unsupported\n");
+                 }
+                 return signalfd(S_ESI, set, 0);
+             }
+diff --git a/src/libtools/signals.c b/src/libtools/signals.c
+index 3bb2bc0c..64b8b2f0 100644
+--- a/src/libtools/signals.c
++++ b/src/libtools/signals.c
+@@ -1954,7 +1954,7 @@ EXPORT sighandler_t my_signal(x64emu_t* emu, int signum, sighandler_t handler)
+         return signal(signum, handler);
+ }
+ EXPORT sighandler_t my___sysv_signal(x64emu_t* emu, int signum, sighandler_t handler) __attribute__((alias("my_signal")));
+-EXPORT sighandler_t my_sysv_signal(x64emu_t* emu, int signum, sighandler_t handler) __attribute__((alias("my_signal")));    // not completly exact
++EXPORT sighandler_t my_sysv_signal(x64emu_t* emu, int signum, sighandler_t handler) __attribute__((alias("my_signal")));    // not completely exact
+ 
+ int EXPORT my_sigaction(x64emu_t* emu, int signum, const x64_sigaction_t *act, x64_sigaction_t *oldact)
+ {
+diff --git a/src/tools/rcfile.c b/src/tools/rcfile.c
+index 26f3aabb..2a281923 100644
+--- a/src/tools/rcfile.c
++++ b/src/tools/rcfile.c
+@@ -566,7 +566,7 @@ void ApplyParams(const char* name)
+         my_reserveHighMem();
+     if(param->is_new_avx_present) {
+         if(!new_avx) {
+-            printf_log(LOG_INFO, "Hidding AVX extension\n");
++            printf_log(LOG_INFO, "Hiding AVX extension\n");
+             box64_avx = 0; box64_avx2 = 0;
+         } else if(new_avx==1) {
+             printf_log(LOG_INFO, "Exposing AVX extension\n");
+-- 
+2.39.2
+

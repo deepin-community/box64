@@ -1,4 +1,39 @@
 #!/usr/bin/make -f
 
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# for DEB_HOST_ARCH
+include /usr/share/dpkg/architecture.mk
+# for DEB_VERSION_UPSTREAM
+include /usr/share/dpkg/pkg-info.mk
+
 %:
-	dh $@
+	dh $@ --buildsystem=cmake+ninja
+
+ifeq ($(DEB_HOST_ARCH),amd64)
+PLATFORMS=NOALIGN
+else ifeq ($(DEB_HOST_ARCH),arm64)
+PLATFORMS=ARM_DYNAREC RPI4ARM64 RK3588
+else ifeq ($(DEB_HOST_ARCH),ppc64el)
+PLATFORMS=PPC64LE
+else ifeq ($(DEB_HOST_ARCH),riscv64)
+PLATFORMS=RV64
+endif
+
+override_dh_auto_configure:
+	set -exu; for p in $(PLATFORMS); do dh_auto_configure --builddirectory=build.$${p} -- -D$${p}=1 -DNOGIT=1 -DNO_LIB_INSTALL=1; done
+
+override_dh_auto_build:
+	pod2man --center "Manual" --release "box64 $(DEB_VERSION_UPSTREAM)" docs/box64.pod > docs/box64.1
+	mkdir -p src/wrapped/generated
+	set -exu; for p in $(PLATFORMS); do dh_auto_build --builddirectory=build.$${p}; done
+
+override_dh_auto_install:
+	set -exu; for p in $(PLATFORMS); do dh_auto_install --builddirectory=build.$${p} --destdir=debian/tmp.$${p}; done
+
+override_dh_auto_clean:
+	set -exu; for p in $(PLATFORMS); do dh_auto_clean --builddirectory=build.$${p}; done
+	rm -f docs/box64.1
+
+# https://github.com/ptitSeb/box64/issues/648
+override_dh_auto_test:
