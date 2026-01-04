@@ -12,16 +12,13 @@
 #include "librarian/library_private.h"
 #include "x64emu.h"
 
-#ifdef ANDROID
-    const char* gstnetName = "libgstnet-1.0.so";
-#else
-    const char* gstnetName = "libgstnet-1.0.so.0";
-#endif
+const char* gstnetName = "libgstnet-1.0.so.0";
+#define ALTNAME "libgstnet-1.0.so"
 
 #define LIBNAME gstnet
 
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #include "wrappedlib_init.h"

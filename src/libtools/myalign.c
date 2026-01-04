@@ -123,6 +123,21 @@ void myStackAlign(x64emu_t* emu, const char* fmt, uint64_t* st, uint64_t* mystac
                     mystack++;
                 memcpy(mystack, st, 16);
                 st+=2; mystack+=2;
+                #elif defined(ANDROID)
+                // there is 128bits long double on native and x64 side
+                // need to align stacks to 128bits boundaries
+                if((((uintptr_t)mystack)&0xf)!=0)
+                    mystack++;
+                if(xmm) {
+                    memcpy(mystack, &emu->xmm[x++], 16);
+                    st+=2; mystack+=2;
+                    --xmm;
+                } else {
+                    if((((uintptr_t)st)&0xf)!=0)
+                        st++;
+                    memcpy(mystack, st, 16);
+                    st+=2; mystack+=2;
+                }
                 #else
                 // there is 128bits long double on ARM64, but they need 128bit alignment
                 if((((uintptr_t)mystack)&0xf)!=0)
@@ -366,6 +381,21 @@ void myStackAlignW(x64emu_t* emu, const char* fmt, uint64_t* st, uint64_t* mysta
                     mystack++;
                 memcpy(mystack, st, 16);
                 st+=2; mystack+=2;
+                #elif defined(ANDROID)
+                // there is 128bits long double on native and x64 side
+                // need to align stacks to 128bits boundaries
+                if((((uintptr_t)mystack)&0xf)!=0)
+                    mystack++;
+                if(xmm) {
+                    memcpy(mystack, &emu->xmm[x++], 16);
+                    st+=2; mystack+=2;
+                    --xmm;
+                } else {
+                    if((((uintptr_t)st)&0xf)!=0)
+                        st++;
+                    memcpy(mystack, st, 16);
+                    st+=2; mystack+=2;
+                }
                 #else
                 // there is 128bits long double on ARM64, but they need 128bit alignment
                 if((((uintptr_t)mystack)&0xf)!=0)
@@ -624,6 +654,14 @@ uintptr_t getVArgs(x64emu_t* emu, int pos, uintptr_t* b, int N)
     return emu->regs[regs_abi[pos+N]].q[0];
 }
 
+void setVArgs(x64emu_t* emu, int pos, uintptr_t* b, int N, uintptr_t a)
+{
+    if((pos+N)>5)
+        b[pos+N-6] = a;
+    else
+        emu->regs[regs_abi[pos+N]].q[0] = a;
+}
+
 #ifndef CONVERT_VALIST
 void myStackAlignValist(x64emu_t* emu, const char* fmt, uint64_t* mystack, x64_va_list_t va)
 {
@@ -735,6 +773,20 @@ void myStackAlignValist(x64emu_t* emu, const char* fmt, uint64_t* mystack, x64_v
                     mystack++;
                 memcpy(mystack, st, 16);
                 st+=2; mystack+=2;
+                #elif defined(ANDROID)
+                // there is 128bits long double on native and x64 side
+                // need to align stacks to 128bits boundaries
+                if((((uintptr_t)mystack)&0xf)!=0)
+                    mystack++;
+                if(fprs<X64_VA_MAX_XMM) {
+                    memcpy(mystack, &area[fprs/8], 16);
+                    fprs+=16; mystack+=2;
+                } else {
+                    if((((uintptr_t)st)&0xf)!=0)
+                        st++;
+                    memcpy(mystack, st, 16);
+                    st+=2; mystack+=2;
+                }
                 #else
                 // there is 128bits long double on ARM64, but they need 128bit alignment
                 if((((uintptr_t)mystack)&0xf)!=0)
@@ -880,6 +932,20 @@ void myStackAlignWValist(x64emu_t* emu, const char* fmt, uint64_t* mystack, x64_
                     mystack++;
                 memcpy(mystack, st, 16);
                 st+=2; mystack+=2;
+                #elif defined(ANDROID)
+                // there is 128bits long double on native and x64 side
+                // need to align stacks to 128bits boundaries
+                if((((uintptr_t)mystack)&0xf)!=0)
+                    mystack++;
+                if(fprs<X64_VA_MAX_XMM) {
+                    memcpy(mystack, &area[fprs/8], 16);
+                    fprs+=16; mystack+=2;
+                } else {
+                    if((((uintptr_t)st)&0xf)!=0)
+                        st++;
+                    memcpy(mystack, st, 16);
+                    st+=2; mystack+=2;
+                }
                 #else
                 // there is 128bits long double on ARM64, but they need 128bit alignment
                 if((((uintptr_t)mystack)&0xf)!=0)
@@ -1131,123 +1197,405 @@ void myStackAlignScanfWValist(x64emu_t* emu, const char* fmt, uint64_t* mystack,
     }
 }
 
+void myStackAlignGVariantNewVa(x64emu_t* emu, const char* fmt, uint64_t* scratch, x64_va_list_t* b)
+{
+    uint64_t* grp = (uint64_t*)((*b)->reg_save_area);
+    uint64_t* frp = (uint64_t*)((*b)->reg_save_area + X64_VA_MAX_REG);
+
+    int idx = 0;
+    int gr_offs = ((*b)->gp_offset) / 8;
+    int fr_offs = ((*b)->fp_offset - X64_VA_MAX_REG) / 8;
+
+    int oa_offs = 0;
+    const char *p = fmt;
+    int state = 0;
+    int inblocks = 0;
+    int tmp;
+
+    do {
+        switch(state) {
+            case 0: // Nothing
+                switch(*p) {
+                    case 'b': // gboolean
+                    case 'y': // guchar
+                    case 'n': // gint16
+                    case 'q': // guint16
+                    case 'i': // gint32
+                    case 'u': // guint32
+                    case 'h': // gint32
+                    case 's': // const gchar*
+                    case 'o':
+                    case 'g':
+                    case 'v': // GVariant*
+                    case '*': // GVariant* of any type
+                    case '?': // GVariant* of basic type
+                    case 'r': // GVariant* of tuple type
+                    case 'x': // gint64
+                    case 't': // guint64
+                        if (gr_offs >= (X64_VA_MAX_REG / 8))
+                            scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                        else
+                            scratch[idx++] = grp[gr_offs++];
+                        break;
+                    case 'd': // gdouble
+                        if (fr_offs >= ((X64_VA_MAX_XMM - X64_VA_MAX_REG) / 8)) {
+                            scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                        } else {
+                            scratch[idx++] = frp[fr_offs];
+                            fr_offs += 2;
+                        }
+                        break;
+                    case '{':
+                    case '(': ++inblocks; break;
+                    case '}':
+                    case ')': --inblocks; break;
+                    case 'a': state = 1; break; // GVariantBuilder* or GVariantIter**
+                    case 'm': state = 2; break; // maybe types
+                    case '@': state = 3; break; // GVariant* of type [type]
+                    case '^': state = 4; break; // pointer value
+                    case '&': break; // pointer: do nothing
+                }
+                break;
+            case 1: // Arrays
+                switch(*p) {
+                    case '{':
+                    case '(': ++tmp; break;
+                    case '}':
+                    case ')': --tmp; break;
+                }
+                if (*p == 'a') break;
+                if (tmp == 0) {
+                    if (gr_offs >= (X64_VA_MAX_REG / 8))
+                        scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                    else
+                        scratch[idx++] = grp[gr_offs++];
+                    state = 0;
+                }
+                break;
+            case 2: // Maybe-types
+                switch(*p) {
+                    case 'b': // gboolean
+                    case 'y': // guchar
+                    case 'n': // gint16
+                    case 'q': // guint16
+                    case 'i': // gint32
+                    case 'u': // guint32
+                    case 'h': // gint32
+                    case 'x': // gint64
+                    case 't': // guint64
+                    case 'd': // gdouble
+                    case '{':
+                    case '}':
+                    case '(':
+                    case ')':
+                        // Add a gboolean or gboolean*, no char increment
+                        if (gr_offs >= (X64_VA_MAX_REG / 8))
+                            scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                        else
+                            scratch[idx++] = grp[gr_offs++];
+                        --p;
+                        state = 0;
+                        break;
+                    case 'a': // GVariantBuilder* or GVariantIter**
+                    case 's': // const gchar*
+                    case 'o':
+                    case 'g':
+                    case 'v': // GVariant*
+                    case '@': // GVariant* of type [type]
+                    case '*': // GVariant* of any type
+                    case '?': // GVariant* of basic type
+                    case 'r': // GVariant* of tuple type
+                    case '&': // pointer
+                    case '^': // pointer value
+                        // Just maybe-NULL
+                        --p;
+                        state = 0;
+                        break;
+
+                    default: // Default to add a gboolean & reinit state?
+                        if (gr_offs >= (X64_VA_MAX_REG / 8))
+                            scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                        else
+                            scratch[idx++] = grp[gr_offs++];
+                        --p;
+                        state = 0;
+                }
+                break;
+            case 3: // GVariant*
+                switch(*p) {
+                    case '{':
+                    case '(': ++tmp; break;
+                    case '}':
+                    case ')': --tmp; break;
+                    case 'a': // GVariantBuilder* or GVariantIter**
+                        do { ++p; } while(*p == 'a'); // Use next character which is not an array (array definition)
+                        switch(*p) {
+                            case '{':
+                            case '(': ++tmp; break;
+                            case '}':
+                            case ')': --tmp; break;
+                        }
+                        break;
+                }
+                if (tmp == 0) {
+                    if (gr_offs >= (X64_VA_MAX_REG / 8))
+                        scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                    else
+                        scratch[idx++] = grp[gr_offs++];
+                    state = 0;
+                }
+                break;
+            case 4: // ^
+                if (*p == 'a') state = 5;
+                else if (*p == '&') state = 8;
+                else state = 0; //???
+                break;
+            case 5: // ^a
+                if ((*p == 's') || (*p == 'o') || (*p == 'y')) {
+                    if (gr_offs >= (X64_VA_MAX_REG / 8))
+                        scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                    else
+                        scratch[idx++] = grp[gr_offs++];
+                    state = 0;
+                } else if (*p == '&') state = 6;
+                else if (*p == 'a') state = 7;
+                else state = 0; //???
+                break;
+            case 6: // ^a&
+                if ((*p == 's') || (*p == 'o')) {
+                    if (gr_offs >= (X64_VA_MAX_REG / 8))
+                        scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                    else
+                        scratch[idx++] = grp[gr_offs++];
+                    state = 0;
+                } else if (*p == 'a') state = 7;
+                else state = 0; //???
+                break;
+            case 7: // ^aa / ^a&a
+                if (*p == 'y') {
+                    if (gr_offs >= (X64_VA_MAX_REG / 8))
+                        scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                    else
+                        scratch[idx++] = grp[gr_offs++];
+                    state = 0;
+                } else state = 0; //???
+                break;
+            case 8: // ^&
+                if (*p == 'a') state = 9;
+                else state = 0; //???
+                break;
+            case 9: // ^&a
+                if (*p == 'y') {
+                    if (gr_offs >= (X64_VA_MAX_REG / 8))
+                        scratch[idx++] = ((uint64_t*)((*b)->overflow_arg_area))[oa_offs++];
+                    else
+                        scratch[idx++] = grp[gr_offs++];
+                    state = 0;
+                } else state = 0; //???
+                break;
+        }
+        ++p;
+    } while (*p && (inblocks || state));                    
+}
+
+void myStackAlignGVariantNew(x64emu_t* emu, const char* fmt, uint64_t* st, uint64_t* mystack, int xmm)
+{
+    if (!fmt)
+        return;
+
+    int x = 0;
+    const char *p = fmt;
+    int state = 0;
+    int inblocks = 0;
+    int tmp;
+
+    do {
+        switch(state) {
+            case 0: // Nothing
+                switch(*p) {
+                    case 'b': // gboolean
+                    case 'y': // guchar
+                    case 'n': // gint16
+                    case 'q': // guint16
+                    case 'i': // gint32
+                    case 'u': // guint32
+                    case 'h': // gint32
+                    case 's': // const gchar*
+                    case 'o':
+                    case 'g':
+                    case 'v': // GVariant*
+                    case '*': // GVariant* of any type
+                    case '?': // GVariant* of basic type
+                    case 'r': // GVariant* of tuple type
+                    case 'x': // gint64
+                    case 't': // guint64
+                        *mystack = *st;
+                        ++mystack;
+                        ++st;
+                        break;
+                    case 'd': // gdouble
+                        if (xmm) {
+                            *mystack = emu->xmm[x++].q[0];
+                            --xmm;
+                            mystack++;
+                        } else {
+                            *mystack = *st;
+                            st++;
+                            mystack++;
+                        }
+                        break;
+                    case '{':
+                    case '(': ++inblocks; break;
+                    case '}':
+                    case ')': --inblocks; break;
+                    case 'a': state = 1; break; // GVariantBuilder* or GVariantIter**
+                    case 'm': state = 2; break; // maybe types
+                    case '@': state = 3; break; // GVariant* of type [type]
+                    case '^': state = 4; break; // pointer value
+                    case '&': break; // pointer: do nothing
+                }
+                break;
+            case 1: // Arrays
+                switch(*p) {
+                    case '{':
+                    case '(': ++tmp; break;
+                    case '}':
+                    case ')': --tmp; break;
+                }
+                if (*p == 'a') break;
+                if (tmp == 0) {
+                    *mystack = *st;
+                    ++mystack;
+                    ++st;
+                    state = 0;
+                }
+                break;
+            case 2: // Maybe-types
+                switch(*p) {
+                    case 'b': // gboolean
+                    case 'y': // guchar
+                    case 'n': // gint16
+                    case 'q': // guint16
+                    case 'i': // gint32
+                    case 'u': // guint32
+                    case 'h': // gint32
+                    case 'x': // gint64
+                    case 't': // guint64
+                    case 'd': // gdouble
+                    case '{':
+                    case '}':
+                    case '(':
+                    case ')':
+                        // Add a gboolean or gboolean*, no char increment
+                        *mystack = *st;
+                        ++mystack;
+                        ++st;
+                        --p;
+                        state = 0;
+                        break;
+                    case 'a': // GVariantBuilder* or GVariantIter**
+                    case 's': // const gchar*
+                    case 'o':
+                    case 'g':
+                    case 'v': // GVariant*
+                    case '@': // GVariant* of type [type]
+                    case '*': // GVariant* of any type
+                    case '?': // GVariant* of basic type
+                    case 'r': // GVariant* of tuple type
+                    case '&': // pointer
+                    case '^': // pointer value
+                        // Just maybe-NULL
+                        --p;
+                        state = 0;
+                        break;
+
+                    default: // Default to add a gboolean & reinit state?
+                        *mystack = *st;
+                        ++mystack;
+                        ++st;
+                        --p;
+                        state = 0;
+                }
+                break;
+            case 3: // GVariant*
+                switch(*p) {
+                    case '{':
+                    case '(': ++tmp; break;
+                    case '}':
+                    case ')': --tmp; break;
+                    case 'a': // GVariantBuilder* or GVariantIter**
+                        do { ++p; } while(*p == 'a'); // Use next character which is not an array (array definition)
+                        switch(*p) {
+                            case '{':
+                            case '(': ++tmp; break;
+                            case '}':
+                            case ')': --tmp; break;
+                        }
+                        break;
+                }
+                if (tmp == 0) {
+                    *mystack = *st;
+                    ++mystack;
+                    ++st;
+                    state = 0;
+                }
+                break;
+            case 4: // ^
+                if (*p == 'a') state = 5;
+                else if (*p == '&') state = 8;
+                else state = 0; //???
+                break;
+            case 5: // ^a
+                if ((*p == 's') || (*p == 'o') || (*p == 'y')) {
+                    *mystack = *st;
+                    ++mystack;
+                    ++st;
+                    state = 0;
+                } else if (*p == '&') state = 6;
+                else if (*p == 'a') state = 7;
+                else state = 0; //???
+                break;
+            case 6: // ^a&
+                if ((*p == 's') || (*p == 'o')) {
+                    *mystack = *st;
+                    ++mystack;
+                    ++st;
+                    state = 0;
+                } else if (*p == 'a') state = 7;
+                else state = 0; //???
+                break;
+            case 7: // ^aa / ^a&a
+                if (*p == 'y') {
+                    *mystack = *st;
+                    ++mystack;
+                    ++st;
+                    state = 0;
+                } else state = 0; //???
+                break;
+            case 8: // ^&
+                if (*p == 'a') state = 9;
+                else state = 0; //???
+                break;
+            case 9: // ^&a
+                if (*p == 'y') {
+                    *mystack = *st;
+                    ++mystack;
+                    ++st;
+                    state = 0;
+                } else state = 0; //???
+                break;
+        }
+        ++p;
+    } while (*p && (inblocks || state));
+}
+
 #endif
 
-#define MUTEX_SIZE_X64 40
-typedef struct my_xcb_ext_s {
-    pthread_mutex_t lock;
-    struct lazyreply *extensions;
-    int extensions_size;
-} my_xcb_ext_t;
-  
-typedef struct x64_xcb_ext_s {
-    uint8_t lock[MUTEX_SIZE_X64];
-    struct lazyreply *extensions;
-    int extensions_size;
-} x64_xcb_ext_t;
-
-typedef struct my_xcb_xid_s {
-    pthread_mutex_t lock;
-    uint32_t last;
-    uint32_t base;
-    uint32_t max;
-    uint32_t inc;
-} my_xcb_xid_t;
-
-typedef struct x64_xcb_xid_s {
-    uint8_t lock[MUTEX_SIZE_X64];
-    uint32_t last;
-    uint32_t base;
-    uint32_t max;
-    uint32_t inc;
-} x64_xcb_xid_t;
-
-typedef struct my_xcb_fd_s {
-    int fd[16];
-    int nfd;
-    int ifd;
-} my_xcb_fd_t;
-
-typedef struct my_xcb_in_s {
-    pthread_cond_t event_cond;
-    int reading;
-    char queue[4096];
-    int queue_len;
-    uint64_t request_expected;
-    uint64_t request_read;
-    uint64_t request_completed;
-    struct reply_list *current_reply;
-    struct reply_list **current_reply_tail;
-    void*  replies;
-    struct event_list *events;
-    struct event_list **events_tail;
-    struct reader_list *readers;
-    struct special_list *special_waiters;
-    struct pending_reply *pending_replies;
-    struct pending_reply **pending_replies_tail;
-    my_xcb_fd_t in_fd;
-    struct xcb_special_event *special_events;
-} my_xcb_in_t;
-
-typedef struct x64_xcb_out_s {
-    pthread_cond_t cond;
-    int writing;
-    pthread_cond_t socket_cond;
-    void (*return_socket)(void *closure);
-    void *socket_closure;
-    int socket_moving;
-    char queue[16384];
-    int queue_len;
-    uint64_t request;
-    uint64_t request_written;
-    uint8_t reqlenlock[40];
-    int maximum_request_length_tag;
-    uint32_t maximum_request_length;
-    my_xcb_fd_t out_fd;
-} x64_xcb_out_t;
-
-typedef struct my_xcb_out_s {
-    pthread_cond_t cond;
-    int writing;
-    pthread_cond_t socket_cond;
-    void (*return_socket)(void *closure);
-    void *socket_closure;
-    int socket_moving;
-    char queue[16384];
-    int queue_len;
-    uint64_t request;
-    uint64_t request_written;
-    pthread_mutex_t reqlenlock;
-    int maximum_request_length_tag;
-    uint32_t maximum_request_length;
-    my_xcb_fd_t out_fd;
-} my_xcb_out_t;
-
-typedef struct my_xcb_connection_s {
-    int has_error;
-    void *setup;
-    int fd;
-    pthread_mutex_t iolock;
-    my_xcb_in_t in;
-    my_xcb_out_t out;
-    my_xcb_ext_t ext;
-    my_xcb_xid_t xid;
-} my_xcb_connection_t;
-
-typedef struct x64_xcb_connection_s {
-    int has_error;
-    void *setup;
-    int fd;
-    uint8_t iolock[MUTEX_SIZE_X64];
-    my_xcb_in_t in;
-    x64_xcb_out_t out;
-    x64_xcb_ext_t ext;
-    x64_xcb_xid_t xid;
-} x64_xcb_connection_t;
+#include "my_xcb_defs.h"
 
 #define NXCB 8
-my_xcb_connection_t* my_xcb_connects[NXCB] = {0};
-x64_xcb_connection_t x64_xcb_connects[NXCB] = {0};
+static my_xcb_connection_t* my_xcb_connects[NXCB] = {0};
+static x64_xcb_connection_t x64_xcb_connects[NXCB] = {0};
 
 void* align_xcb_connection(void* src)
 {
@@ -1263,7 +1611,7 @@ void* align_xcb_connection(void* src)
         dest = add_xcb_connection(src);
     #else
     if(!dest) {
-        printf_log(LOG_NONE, "BOX64: Error, xcb_connect %p not found\n", src);
+        printf_log(LOG_NONE, "Error, xcb_connect %p not found\n", src);
         abort();
     }
     #endif
@@ -1341,7 +1689,7 @@ void* add_xcb_connection(void* src)
             unalign_xcb_connection(src, &x64_xcb_connects[i]);
             return &x64_xcb_connects[i];
         }
-    printf_log(LOG_NONE, "BOX64: Error, no more free xcb_connect slot for %p\n", src);
+    printf_log(LOG_NONE, "Error, no more free xcb_connect slot for %p\n", src);
     return src;
 }
 
@@ -1356,5 +1704,5 @@ void del_xcb_connection(void* src)
             memset(&x64_xcb_connects[i], 0, sizeof(x64_xcb_connection_t));
             return;
         }
-    printf_log(LOG_NONE, "BOX64: Error, xcb_connect %p not found for deletion\n", src);
+    printf_log(LOG_NONE, "Error, xcb_connect %p not found for deletion\n", src);
 }

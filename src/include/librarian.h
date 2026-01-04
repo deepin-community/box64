@@ -30,12 +30,14 @@ void promoteLocalLibGlobal(library_t* lib);
 int isLibLocal(library_t* lib);
 uintptr_t FindGlobalSymbol(lib_t *maplib, const char* name, int version, const char* vername, int veropt);
 int GetNoSelfSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, elfheader_t* self, size_t size, int version, const char* vername, int veropt, void** elfsym);
+int GetNextSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, elfheader_t* self, size_t size, int version, const char* vername, int veropt, void** elfsym);
 int GetGlobalSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, elfheader_t* self, int version, const char* vername, int veropt, void** elfsym);
 int GetGlobalWeakSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, elfheader_t *self, int version, const char* vername, int veropt, void** elfsym);
 int GetGlobalNoWeakSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, int version, const char* vername, int veropt, void** elfsym);
 int GetLocalSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, elfheader_t *self, int version, const char* vername, int veropt, void** elfsym);
 elfheader_t* GetGlobalSymbolElf(lib_t *maplib, const char* name, int version, const char* vername, int veropt);
 int IsGlobalNoWeakSymbolInNative(lib_t *maplib, const char* name, int version, const char* vername, int veropt);
+int GetAnySymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, int version, const char* vername, int veropt);
 int GetSymTabStartEnd(lib_t* maplib, const char* name, uintptr_t* start, uintptr_t* end);
 
 void MapLibRemoveLib(lib_t* maplib, library_t* lib);

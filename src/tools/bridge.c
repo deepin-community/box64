@@ -7,7 +7,8 @@
 #include <sys/mman.h>
 #include <errno.h>
 
-#include <wrappedlibs.h>
+#include "os.h"
+#include "wrappedlibs.h"
 #include "custommem.h"
 #include "bridge.h"
 #include "bridge_private.h"
@@ -16,8 +17,12 @@
 #include "x64emu.h"
 #include "box64context.h"
 #include "elfloader.h"
+#include "alternate.h"
 #ifdef DYNAREC
 #include "dynablock.h"
+#endif
+#ifdef BOX32
+#include "box32context.h"
 #endif
 
 KHASH_MAP_INIT_INT64(bridgemap, uintptr_t)
@@ -37,25 +42,25 @@ typedef struct bridge_s {
     kh_bridgemap_t  *bridgemap;
 } bridge_t;
 
-// from src/wrapped/wrappedlibc.c
-void* my_mmap(x64emu_t* emu, void* addr, unsigned long length, int prot, int flags, int fd, int64_t offset);
-int my_munmap(x64emu_t* emu, void* addr, unsigned long length);
-
 brick_t* NewBrick(void* old)
 {
     brick_t* ret = (brick_t*)box_calloc(1, sizeof(brick_t));
-    if(old)
-        old = old + NBRICK * sizeof(onebridge_t);
-    void* ptr = my_mmap(NULL, old, NBRICK * sizeof(onebridge_t), PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | 0x40 | MAP_ANONYMOUS, -1, 0); // 0x40 is MAP_32BIT
+    static void* load_addr_32bits = NULL;
+    if(box64_is32bits)
+        old = load_addr_32bits;
+    else {
+        if(old)
+            old = old + NBRICK * sizeof(onebridge_t);
+    }
+    void* ptr = box_mmap(old, NBRICK * sizeof(onebridge_t), PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | ((!box64_is32bits && box64_wine)?0:0x40) | MAP_ANONYMOUS, -1, 0); // 0x40 is MAP_32BIT
     if(ptr == MAP_FAILED)
-        ptr = my_mmap(NULL, NULL, NBRICK * sizeof(onebridge_t), PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | 0x40 | MAP_ANONYMOUS, -1, 0);
+        ptr = box_mmap(NULL, NBRICK * sizeof(onebridge_t), PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | ((!box64_is32bits && box64_wine)?0:0x40) | MAP_ANONYMOUS, -1, 0);
     if(ptr == MAP_FAILED) {
         printf_log(LOG_NONE, "Warning, cannot allocate 0x%lx aligned bytes for bridge, will probably crash later\n", NBRICK*sizeof(onebridge_t));
     }
-    #ifdef DYNAREC
-    setProtection((uintptr_t)ptr, NBRICK * sizeof(onebridge_t), PROT_READ | PROT_WRITE | PROT_EXEC | PROT_NOPROT);
-    #endif
+    setProtection_box((uintptr_t)ptr, NBRICK * sizeof(onebridge_t), PROT_READ | PROT_WRITE | PROT_EXEC | PROT_NOPROT);
     dynarec_log(LOG_INFO, "New Bridge brick at %p (size 0x%zx)\n", ptr, NBRICK*sizeof(onebridge_t));
+    if(box64_is32bits) load_addr_32bits = ptr + NBRICK*sizeof(onebridge_t);
     ret->b = ptr;
     return ret;
 }
@@ -63,7 +68,14 @@ brick_t* NewBrick(void* old)
 bridge_t *NewBridge()
 {
     bridge_t *b = (bridge_t*)box_calloc(1, sizeof(bridge_t));
-    b->head = NewBrick(NULL);
+    // before enable seccomp and bpf fileter, proton check if "syscall" address (from libc) is > 0x700000000000
+    // it also test if an internal symbol "sc_seccomp" address's is also > 0x700000000000 before enabling seccomp syscall filter.
+    // This hack  allow the test to pass, but only if the system has at least 47bits address space.
+    // it will not work on 39bits address space and will need more hacks there
+    void* load_addr = NULL;
+    if((!box64_is32bits && box64_wine && my_context->exit_bridge))  // a first bridge is create for system use, before box64_is32bits can be computed, so use exit_bridge to detect that
+        load_addr = (void*)0x700000000000LL;
+    b->head = NewBrick(load_addr);
     b->last = b->head;
     b->bridgemap = kh_init(bridgemap);
 
@@ -77,7 +89,8 @@ void FreeBridge(bridge_t** bridge)
     while(b) {
         brick_t *n = b->next;
         dynarec_log(LOG_INFO, "FreeBridge brick at %p (size 0x%zx)\n", b->b, NBRICK*sizeof(onebridge_t));
-        my_munmap(NULL, b->b, NBRICK*sizeof(onebridge_t));
+        box_munmap(b->b, NBRICK*sizeof(onebridge_t));
+        freeProtection((uintptr_t)b->b, NBRICK*sizeof(onebridge_t));
         box_free(b);
         b = n;
     }
@@ -155,22 +168,36 @@ uintptr_t AddAutomaticBridge(bridge_t* bridge, wrapper_t w, void* fnc, int N, co
     return ret;
 }
 
-void* GetNativeFnc(uintptr_t fnc)
+uintptr_t AddAutomaticBridgeAlt(bridge_t* bridge, wrapper_t w, void* fnc, void* alt, int N, const char* name)
+{
+    if(!fnc)
+        return 0;
+    uintptr_t ret = CheckBridged(bridge, alt);
+    if(!ret)
+        ret = AddBridge(bridge, w, alt, N, name);
+    if(!hasAlternate(fnc)) {
+        printf_log(LOG_DEBUG, "Adding AutomaticBridge for %p to %p\n", fnc, (void*)ret);
+        addAlternate(fnc, (void*)ret);
+    }
+    return ret;
+}
+
+void* GetNativeOrAlt(void* fnc, void* alt)
 {
     if(!fnc) return NULL;
     // check if function exist in some loaded lib
-    if(!FindElfAddress(my_context, fnc)) {
+    if(!FindElfAddress(my_context, (uintptr_t)fnc)) {
         Dl_info info;
-        if(dladdr((void*)fnc, &info))
-            return (void*)fnc;
+        if(dladdr(fnc, &info))
+            return fnc;
     }
-    if(!getProtection(fnc))
-        return NULL;
+    if(!getProtection((uintptr_t)fnc))
+        return alt;
     // check if it's an indirect jump
     #define PK(a)       *(uint8_t*)(fnc+a)
     #define PK32(a)     *(uint32_t*)(fnc+a)
     if(PK(0)==0xff && PK(1)==0x25) {    // "absolute" jump, maybe the GOT (it's a RIP+relative in fact)
-        uintptr_t a1 = fnc+6+(PK32(2)); // need to add a check to see if the address is from the GOT !
+        uintptr_t a1 = (uintptr_t)fnc+6+(PK32(2)); // need to add a check to see if the address is from the GOT !
         a1 = *(uintptr_t*)a1;
         if(a1 && a1>0x10000) {
             a1 = (uintptr_t)GetNativeFnc(a1);
@@ -183,10 +210,13 @@ void* GetNativeFnc(uintptr_t fnc)
     // check if bridge exist
     onebridge_t *b = (onebridge_t*)fnc;
     if(b->CC != 0xCC || b->S!='S' || b->C!='C' || (b->C3!=0xC3 && b->C3!=0xC2))
-        return NULL;    // not a bridge?!
+        return alt;    // not a bridge?!
     return (void*)b->f;
 }
-
+void* GetNativeFnc(uintptr_t fnc)
+{
+    return GetNativeOrAlt((void*)fnc, NULL);
+}
 void* GetNativeFncOrFnc(uintptr_t fnc)
 {
     onebridge_t *b = (onebridge_t*)fnc;
@@ -222,54 +252,18 @@ uintptr_t AddVSyscall(bridge_t* bridge, int num)
 
 const char* getBridgeName(void* addr)
 {
+    if(!memExist((uintptr_t)addr))
+        return NULL;
+    if(!(getProtection((uintptr_t)addr)&PROT_READ))
+        return NULL;
     onebridge_t* one = (onebridge_t*)(((uintptr_t)addr&~(sizeof(onebridge_t)-1)));   // align to start of bridge
-    if(one->C3==0xC3 && one->S=='S' && one->C=='C') {
+    if (one->C3 == 0xC3 && IsBridgeSignature(one->S, one->C)) {
         if(one->w==NULL)
             return "ExitEmulation";
         else
             return one->name;
     }
     return NULL;
-}
-
-
-// Alternate address handling
-KHASH_MAP_INIT_INT64(alternate, void*)
-static kh_alternate_t *my_alternates = NULL;
-
-int hasAlternate(void* addr) {
-    if(!my_alternates)
-        return 0;
-    khint_t k = kh_get(alternate, my_alternates, (uintptr_t)addr);
-    if(k==kh_end(my_alternates))
-        return 0;
-    return 1;
-}
-
-void* getAlternate(void* addr) {
-    if(!my_alternates)
-        return addr;
-    khint_t k = kh_get(alternate, my_alternates, (uintptr_t)addr);
-    if(k!=kh_end(my_alternates))
-        return kh_value(my_alternates, k);
-    return addr;
-}
-void addAlternate(void* addr, void* alt) {
-    if(!my_alternates) {
-        my_alternates = kh_init(alternate);
-    }
-    int ret;
-    khint_t k = kh_put(alternate, my_alternates, (uintptr_t)addr, &ret);
-    if(!ret)    // already there
-        return;
-    kh_value(my_alternates, k) = alt;
-}
-
-void cleanAlternate() {
-    if(my_alternates) {
-        kh_destroy(alternate, my_alternates);
-        my_alternates = NULL;
-    }
 }
 
 void init_bridge_helper()
@@ -279,4 +273,64 @@ void init_bridge_helper()
 void fini_bridge_helper()
 {
     cleanAlternate();
+}
+
+#ifdef BOX32
+int isNativeCall32(uintptr_t addr, uintptr_t* calladdress, uint16_t* retn)
+{
+#define PK(a)       *(uint8_t*)(addr+a)
+#define PK32(a)     *(uint32_t*)(addr+a)
+
+    if(!addr || !getProtection(addr))
+        return 0;
+    if(PK(0)==0xff && PK(1)==0x25) {  // absolute jump, maybe the GOT
+        ptr_t a1 = (PK32(2));   // need to add a check to see if the address is from the GOT !
+        addr = (uintptr_t)getAlternate(from_ptrv(a1)); 
+    }
+    if(addr<0x10000 || !getProtection(addr))    // too low, that is suspicious
+        return 0;
+    onebridge_t *b = (onebridge_t*)(addr);
+    if(b->CC==0xCC && b->S=='S' && b->C=='C' && b->w!=(wrapper_t)0 && b->f!=(uintptr_t)PltResolver32) {
+        // found !
+        if(retn) *retn = (b->C3==0xC2)?b->N:0;
+        if(calladdress) *calladdress = addr+1;
+        return 1;
+    }
+    return 0;
+#undef PK32
+#undef PK
+}
+#else
+int isNativeCall32(uintptr_t addr, uintptr_t* calladdress, uint16_t* retn)
+{
+    return 0;
+}
+#endif
+
+int isNativeCallInternal(uintptr_t addr, int is32bits, uintptr_t* calladdress, uint16_t* retn)
+{
+    if (is32bits)
+        return isNativeCall32(addr, calladdress, retn);
+
+#define PK(a)   *(uint8_t*)(addr + a)
+#define PK32(a) *(int32_t*)(addr + a)
+
+    if (!addr || !getProtection(addr))
+        return 0;
+    if (PK(0) == 0xff && PK(1) == 0x25) {    // "absolute" jump, maybe the GOT (well, RIP relative in fact)
+        uintptr_t a1 = addr + 6 + (PK32(2)); // need to add a check to see if the address is from the GOT !
+        addr = (uintptr_t)getAlternate(*(void**)a1);
+    }
+    if (!addr || !getProtection(addr))
+        return 0;
+    onebridge_t* b = (onebridge_t*)(addr);
+    if (b->CC == 0xCC && IsBridgeSignature(b->S, b->C) && b->w != (wrapper_t)0 && b->f != (uintptr_t)PltResolver64) {
+        // found !
+        if (retn) *retn = (b->C3 == 0xC2) ? b->N : 0;
+        if (calladdress) *calladdress = addr + 1;
+        return 1;
+    }
+    return 0;
+#undef PK32
+#undef PK
 }

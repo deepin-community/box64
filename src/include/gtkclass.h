@@ -50,6 +50,26 @@ typedef struct my_GObjectClass_s
   void*  pdummy[6];
 } my_GObjectClass_t;
 
+typedef struct my_GTypeModule_s
+{
+  my_GObject_t parent_instance;
+  uint32_t use_count;
+  void* type_infos;      // GSList
+  void* interface_infos; // GSList
+  char *name;
+} my_GTypeModule_t;
+
+typedef struct my_GTypeModuleClass_s
+{
+  my_GObjectClass_t parent_class;
+  int  (*load)   (my_GTypeModule_t* module);
+  void (*unload) (my_GTypeModule_t* module);
+  void (*reserved1) (void);
+  void (*reserved2) (void);
+  void (*reserved3) (void);
+  void (*reserved4) (void);
+} my_GTypeModuleClass_t;
+
 typedef struct my_GInitiallyUnowned_s
 {
   my_GTypeInstance_t  g_type_instance;
@@ -2104,6 +2124,40 @@ typedef struct my_GstAudioFilterClass_s {
   void* _gst_reserved[20];
 } my_GstAudioFilterClass_t;
 
+typedef struct my_GstBufferPool_s {
+  my_GstObject_t      object;
+  int                 flushing;
+  void*               priv; //GstBufferPoolPrivate
+  void*               _gst_reserved[4];
+} my_GstBufferPool_t;
+
+typedef struct my_GstBufferPoolClass_s {
+  my_GstObjectClass_t object_class;
+  void* (*get_options)    (void* pool);
+  int   (*set_config)     (void* pool, void* config);
+  int   (*start)          (void* pool);
+  int   (*stop)           (void* pool);
+  int   (*acquire_buffer) (void* pool, void* buffer, void* params);
+  int   (*alloc_buffer)   (void* pool, void* buffer, void* params);
+  void  (*reset_buffer)   (void* pool, void* buffer);
+  void  (*release_buffer) (void* pool, void* buffer);
+  void  (*free_buffer)    (void* pool, void* buffer);
+  void  (*flush_start)    (void* pool);
+  void  (*flush_stop)     (void* pool);
+  void*  _gst_reserved[4 - 2];
+} my_GstBufferPoolClass_t;
+
+typedef struct my_GstVideoBufferPool_s
+{
+  my_GstBufferPool_t bufferpool;
+  void* priv; //GstVideoBufferPoolPrivate
+} my_GstVideoBufferPool_t;
+
+typedef struct my_GstVideoBufferPoolClass_s
+{
+  my_GstBufferPoolClass_t parent;
+} my_GstVideoBufferPoolClass_t;
+
 typedef struct my_GDBusProxy_s
 {
   my_GObject_t  parent;
@@ -2181,6 +2235,7 @@ typedef struct my_GtkTypeInfo_s {
 my_GTypeValueTable_t* findFreeGTypeValueTable(my_GTypeValueTable_t* fcts);
 my_GTypeInfo_t* findFreeGTypeInfo(my_GTypeInfo_t* fcts, size_t parent);
 my_GtkTypeInfo_t* findFreeGtkTypeInfo(my_GtkTypeInfo_t* fcts, size_t parent);
+void* find_class_init_Fct(void* fct, size_t parent);
 
 void InitGTKClass(bridge_t *bridge);
 void FiniGTKClass(void);
@@ -2262,6 +2317,8 @@ GTKCLASS(GstGLBaseSrc)              \
 GTKCLASS(GstAudioDecoder)           \
 GTKCLASS(GstVideoFilter)            \
 GTKCLASS(GstAudioFilter)            \
+GTKCLASS(GstBufferPool)             \
+GTKCLASS(GstVideoBufferPool)        \
 GTKIFACE(GstURIHandler)             \
 
 #define GTKCLASS(A) void Set##A##ID(size_t id);
@@ -2277,6 +2334,8 @@ void AutoBridgeGtk(void*(*ref)(size_t), void(*unref)(void*));
 
 void* wrapCopyGTKClass(void* cl, size_t type);
 void* unwrapCopyGTKClass(void* klass, size_t type);
+void wrapGTKClass(void* cl, size_t type);
+void unwrapGTKClass(void* klass, size_t type);
 
 void unwrapGTKInterface(void* cl, size_t type);
 void* wrapCopyGTKInterface(void* cl, size_t type);
@@ -2286,20 +2345,6 @@ void unwrapGTKInstance(void* cl, size_t type);
 void bridgeGTKInstance(void* cl, size_t type);
 
 void addRegisteredClass(size_t klass, char* name);
-
-typedef struct my_signal_s {
-    uint64_t sign;  // signature
-    void* data;
-    uintptr_t c_handler;
-    uintptr_t destroy;
-} my_signal_t;
-// some random sign to identify a my_signal_t
-#define SIGN 0xFB3405EB4510AA00LL
-
-my_signal_t* new_mysignal(void* f, void* data, void* destroy);
-void my_signal_delete(my_signal_t* sig);
-int my_signal_is_valid(void* sig);
-int my_signal_cb(void* a, void* b, void* c, void* d);
 
 void my_add_signal_offset(size_t klass, uint32_t offset, int n);
 

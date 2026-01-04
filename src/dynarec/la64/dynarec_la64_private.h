@@ -6,6 +6,7 @@
 typedef struct x64emu_s x64emu_t;
 typedef struct dynablock_s dynablock_t;
 typedef struct instsize_s instsize_t;
+typedef struct box64env_s box64env_t;
 
 #define BARRIER_MAYBE   8
 
@@ -16,7 +17,12 @@ typedef struct instsize_s instsize_t;
 #define LSX_CACHE_MM     4
 #define LSX_CACHE_XMMW   5
 #define LSX_CACHE_XMMR   6
-#define LSX_CACHE_SCR    7
+#define LSX_CACHE_YMMW   7
+#define LSX_CACHE_YMMR   8
+#define LSX_CACHE_SCR    9
+
+#define LSX_AVX_WIDTH_128 0
+#define LSX_AVX_WIDTH_256 1
 
 typedef union lsx_cache_s {
     int8_t v;
@@ -34,6 +40,16 @@ typedef union sse_cache_s {
     };
 } sse_cache_t;
 
+typedef union avx_cache_s {
+    int8_t v;
+    struct {
+        uint8_t reg : 5;
+        uint8_t width : 1;
+        uint8_t zero_upper : 1;        
+        uint8_t write : 1;
+    };
+} avx_cache_t;
+
 typedef struct lsxcache_s {
     // LSX cache
     lsx_cache_t     lsxcache[24];
@@ -45,26 +61,28 @@ typedef struct lsxcache_s {
     uint8_t         combined2;
     uint8_t         swapped;        // the combined reg were swapped
     uint8_t         barrier;        // is there a barrier at instruction epilog?
+    uint8_t         pushed;         // positive pushed value (to check for overflow)
+    uint8_t         poped;          // positive poped value (to check for underflow)
     uint32_t        news;           // bitmask, wich neoncache are new for this opcode
     // fpu cache
     int8_t          x87cache[8];    // cache status for the 8 x87 register behind the fpu stack
     int8_t          x87reg[8];      // reg used for x87cache entry
-    int8_t          freed[8];       // set when FFREE is used, -1 else
+    int16_t         tags;           // similar to fpu_tags
     int8_t          mmxcache[8];    // cache status for the 8 MMX registers
     sse_cache_t     ssecache[16];   // cache status for the 16 SSE(2) registers
+    avx_cache_t     avxcache[16];   // cache status for the 16 SSE(2) registers
     int8_t          fpuused[24];    // all 0..24 double reg from fpu, used by x87, sse and mmx
     int8_t          x87stack;       // cache stack counter
     int8_t          mmxcount;       // number of mmx register used (not both mmx and x87 at the same time)
     int8_t          fpu_scratch;    // scratch counter
-    int8_t          fpu_extra_qscratch; // some opcode need an extra quad scratch register
-    int8_t          fpu_reg;        // x87/sse/mmx reg counter
 } lsxcache_t;
 
 typedef struct flagcache_s {
     int                 pending;    // is there a pending flags here, or to check?
     uint8_t             dfnone;     // if deferred flags is already set to df_none
-    uint8_t             dfnone_here;// defered flags is cleared in this opcode
 } flagcache_t;
+
+typedef struct callret_s callret_t;
 
 typedef struct instruction_la64_s {
     instruction_x64_t   x64;
@@ -78,18 +96,24 @@ typedef struct instruction_la64_s {
     uintptr_t           markf[2];
     uintptr_t           markseg;
     uintptr_t           marklock;
+    uintptr_t           marklock2;
     int                 pass2choice;// value for choices that are fixed on pass2 for pass3
     uintptr_t           natcall;
     uint16_t            retn;
-    uint16_t            purge_ymm;  // need to purge some ymm
-    uint16_t            ymm0_in;    // bitmap of ymm to zero at purge
-    uint16_t            ymm0_add;   // the ymm0 added by the opcode
-    uint16_t            ymm0_sub;   // the ymm0 removed by the opcode
-    uint16_t            ymm0_out;   // the ymmm0 at th end of the opcode
     uint16_t            ymm0_pass2, ymm0_pass3;
     uint8_t             barrier_maybe;
-    uint8_t             will_write;
-    uint8_t             last_write;
+    uint8_t             will_write:2;    // [strongmem] will write to memory
+    uint8_t             will_read:1;     // [strongmem] will read from memory
+    uint8_t             last_write:1;    // [strongmem] the last write in a SEQ
+    uint8_t             lock:1;          // [strongmem] lock semantic
+    uint8_t             df_notneeded;
+    uint8_t             nat_flags_fusion:1;
+    uint8_t             nat_flags_nofusion:1;
+    uint8_t             nat_flags_carry:1;
+    uint8_t             nat_flags_sign:1;
+    uint8_t             nat_flags_needsign:1;
+    uint8_t             nat_flags_op1;
+    uint8_t             nat_flags_op2;
     flagcache_t         f_exit;     // flags status at end of instruction
     lsxcache_t          lsx;        // lsxcache at end of instruction (but before poping)
     flagcache_t         f_entry;    // flags status before the instruction begin
@@ -100,6 +124,7 @@ typedef struct dynarec_la64_s {
     int32_t              size;
     int32_t              cap;
     uintptr_t            start;      // start of the block
+    uintptr_t            end;        // maximum end of the block (only used in pass0)
     uint32_t             isize;      // size in bytes of x64 instructions included
     void*                block;      // memory pointer where next instruction is emitted
     uintptr_t            native_start;  // start of the arm code
@@ -122,15 +147,23 @@ typedef struct dynarec_la64_s {
     dynablock_t*         dynablock;
     instsize_t*          instsize;
     size_t               insts_size; // size of the instruction size array (calculated)
+    int                  callret_size;   // size of the array
+    callret_t*           callrets;   // arrey of callret return, with NOP / UDF depending if the block is clean or dirty
     uintptr_t            forward;    // address of the last end of code while testing forward
     uintptr_t            forward_to; // address of the next jump to (to check if everything is ok)
     int32_t              forward_size;   // size at the forward point
     int                  forward_ninst;  // ninst at the forward point
     uint16_t             ymm_zero;   // bitmap of ymm to zero at purge
-    uint8_t              smread;    // for strongmem model emulation
     uint8_t              smwrite;    // for strongmem model emulation
     uint8_t              always_test;
     uint8_t              abort;
+    void*               gdbjit_block;
+    uint32_t            need_x87check; // x87 low precision check
+    uint32_t            need_dump;     // need to dump the block
+    int                 need_reloc; // does the dynablock need relocations
+    int                 reloc_size;
+    uint32_t*           relocs;
+    box64env_t*         env;
 } dynarec_la64_t;
 
 void add_next(dynarec_la64_t *dyn, uintptr_t addr);
@@ -141,16 +174,17 @@ int get_first_jump_addr(dynarec_la64_t *dyn, uintptr_t next);
 int is_nops(dynarec_la64_t *dyn, uintptr_t addr, int n);
 int is_instructions(dynarec_la64_t *dyn, uintptr_t addr, int n);
 
+int isTable64(dynarec_la64_t *dyn, uint64_t val); // return 1 if val already in Table64
 int Table64(dynarec_la64_t *dyn, uint64_t val, int pass);  // add a value to table64 (if needed) and gives back the imm19 to use in LDR_literal
 
 void CreateJmpNext(void* addr, void* next);
 
-#define GO_TRACE(A, B, s0) \
-    GETIP(addr);           \
-    MV(A1, xRIP);          \
-    STORE_XEMU_CALL();     \
-    MOV64x(A2, B);         \
-    CALL(A, -1);           \
+#define GO_TRACE(A, B, s0)         \
+    GETIP(addr, s0);               \
+    MV(x1, xRIP);                  \
+    STORE_XEMU_CALL();             \
+    MOV64x(x2, B);                 \
+    CALL(const_##A, -1, x1, x2);   \
     LOAD_XEMU_CALL()
 
 #endif //__DYNAREC_ARM_PRIVATE_H_

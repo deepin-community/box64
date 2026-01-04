@@ -5,10 +5,8 @@
 
 #include "debug.h"
 #include "box64context.h"
-#include "dynarec.h"
+#include "box64cpu.h"
 #include "emu/x64emu_private.h"
-#include "emu/x64run_private.h"
-#include "x64run.h"
 #include "x64emu.h"
 #include "box64stack.h"
 #include "callback.h"
@@ -19,7 +17,7 @@
 
 #include "arm64_printer.h"
 #include "dynarec_arm64_private.h"
-#include "dynarec_arm64_helper.h"
+#include "../dynarec_helper.h"
 #include "dynarec_arm64_functions.h"
 
 
@@ -51,7 +49,6 @@ uintptr_t dynarec64_DD(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
         case 0xC6:
         case 0xC7:
             INST_NAME("FFREE STx");
-            #if 1
             if((nextop&7)==0 && PK(0)==0xD9 && PK(1)==0xF7) {
                 MESSAGE(LOG_DUMP, "Hack for FFREE ST0 / FINCSTP\n");
                 x87_do_pop(dyn, ninst, x1);
@@ -59,12 +56,6 @@ uintptr_t dynarec64_DD(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 SKIPTEST(x1);
             } else
                 x87_free(dyn, ninst, x1, x2, x3, nextop&7);
-            #else
-            MESSAGE(LOG_DUMP, "Need Optimization\n");
-            x87_purgecache(dyn, ninst, 0, x1, x2, x3);
-            MOV32w(x1, nextop&7);
-            CALL(fpu_do_free, -1);
-            #endif
             break;
         case 0xD0:
         case 0xD1:
@@ -159,21 +150,22 @@ uintptr_t dynarec64_DD(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     VST64(v1, ed, fixedaddress);
                 } else {
                     s0 = fpu_get_scratch(dyn, ninst);
-                    if(arm64_frintts) {
+                    if(cpuext.frintts) {
                         FRINT64ZD(s0, v1);
-                        FCVTZSxD(x2, s0);
-                        STx(x2, ed, fixedaddress);
+                        VFCVTZSd(s0, s0);
+                        VST64(s0, ed, fixedaddress);
                     } else {
                         MRS_fpsr(x5);
                         BFCw(x5, FPSR_IOC, 1);   // reset IOC bit
                         MSR_fpsr(x5);
                         FRINTRRD(s0, v1, 3);
-                        FCVTZSxD(x2, s0);
+                        VFCVTZSd(s0, s0);
+                        VST64(s0, ed, fixedaddress);
                         MRS_fpsr(x5);   // get back FPSR to check the IOC bit
                         TBZ_MARK3(x5, FPSR_IOC);
                         ORRx_mask(x2, xZR, 1, 1, 0);    //0x8000000000000000
-                        MARK3;
                         STx(x2, ed, fixedaddress);
+                        MARK3;
                     }
                 }
                 X87_POP_OR_FAIL(dyn, ninst, x3);
@@ -193,24 +185,23 @@ uintptr_t dynarec64_DD(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 break;
             case 4:
                 INST_NAME("FRSTOR m108byte");
-                MESSAGE(LOG_DUMP, "Need Optimization\n");
-                fpu_purgecache(dyn, ninst, 0, x1, x2, x3);
+                MESSAGE(LOG_DUMP, "Need Optimization (FRSTOR)\n");
+                BARRIER(BARRIER_FLOAT);
                 addr = geted(dyn, addr, ninst, nextop, &ed, x1, &fixedaddress, NULL, 0, 0, rex, NULL, 0, 0);
                 if(ed!=x1) {MOVx_REG(x1, ed);}
-                CALL(native_frstor, -1);
+                CALL(const_native_frstor, -1);
                 break;
             case 6:
                 INST_NAME("FNSAVE m108byte");
-                MESSAGE(LOG_DUMP, "Need Optimization\n");
-                fpu_purgecache(dyn, ninst, 0, x1, x2, x3);
+                MESSAGE(LOG_DUMP, "Need Optimization (FNSAVE)\n");
+                BARRIER(BARRIER_FLOAT);
                 addr = geted(dyn, addr, ninst, nextop, &ed, x1, &fixedaddress, NULL, 0, 0, rex, NULL, 0, 0);
                 if(ed!=x1) {MOVx_REG(x1, ed);}
-                CALL(native_fsave, -1);
-                CALL(reset_fpu, -1);
+                CALL(const_native_fsave, -1);
+                NATIVE_RESTORE_X87PC();
                 break;
             case 7:
                 INST_NAME("FNSTSW m2byte");
-                //fpu_purgecache(dyn, ninst, 0, x1, x2, x3);
                 addr = geted(dyn, addr, ninst, nextop, &ed, x4, &fixedaddress, &unscaled, 0xfff<<1, 1, rex, NULL, 0, 0);
                 LDRw_U12(x2, xEmu, offsetof(x64emu_t, top));
                 LDRH_U12(x3, xEmu, offsetof(x64emu_t, sw));

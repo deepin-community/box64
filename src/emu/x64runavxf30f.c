@@ -9,10 +9,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "os.h"
 #include "debug.h"
 #include "box64stack.h"
 #include "x64emu.h"
-#include "x64run.h"
 #include "x64emu_private.h"
 #include "x64run_private.h"
 #include "x64primop.h"
@@ -21,7 +21,6 @@
 #include "box64context.h"
 #include "my_cpuid.h"
 #include "bridge.h"
-#include "signals.h"
 #include "x64shaext.h"
 #ifdef DYNAREC
 #include "custommem.h"
@@ -29,11 +28,6 @@
 #endif
 
 #include "modrm.h"
-
-#ifdef __clang__
-extern int isinff(float);
-extern int isnanf(float);
-#endif
 
 #ifdef TEST_INTERPRETER
 uintptr_t TestAVX_F30F(x64test_t *test, vex_t vex, uintptr_t addr, int *step)
@@ -107,7 +101,7 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
                 GY->u128 = 0;
             break;
 
-        case 0x16:  /* MOVSHDUP Gx, Ex */
+        case 0x16:  /* VMOVSHDUP Gx, Ex */
             nextop = F8;
             GETEX(0);
             GETGX;
@@ -142,12 +136,12 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
             GETEX(0);
             GETGD;
             if (rex.w) {
-                if(isnanf(EX->f[0]) || isinff(EX->f[0]) || EX->f[0]>(float)0x7fffffffffffffffLL)
+                if(isnanf(EX->f[0]) || isinff(EX->f[0]) || EX->f[0]>=(float)0x7fffffffffffffffLL)
                     GD->q[0] = 0x8000000000000000LL;
                 else
                     GD->sq[0] = EX->f[0];
             } else {
-                if(isnanf(EX->f[0]) || isinff(EX->f[0]) || EX->f[0]>0x7fffffff)
+                if(isnanf(EX->f[0]) || isinff(EX->f[0]) || EX->f[0]>=(float)0x7fffffff)
                     GD->dword[0] = 0x80000000;
                 else
                     GD->sdword[0] = EX->f[0];
@@ -159,7 +153,7 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
             GETEX(0);
             GETGD;
             if(rex.w) {
-                if(isnanf(EX->f[0]) || isinff(EX->f[0]) || EX->f[0]>(float)0x7fffffffffffffffLL)
+                if(isnanf(EX->f[0]) || isinff(EX->f[0]) || EX->f[0]>=(float)0x7fffffffffffffffLL)
                     GD->q[0] = 0x8000000000000000LL;
                 else
                     switch(emu->mxcsr.f.MXCSR_RC) {
@@ -216,6 +210,8 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
             GETGX; GETVX; GETGY;
             if(EX->f[0]<0.0 )
                 GX->f[0] = -NAN;
+            else if(isnanf(EX->f[0]))
+                GX->f[0] = EX->f[0];
             else
                 GX->f[0] = sqrt(EX->f[0]);
             if(GX!=VX) {
@@ -228,7 +224,16 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
             nextop = F8;
             GETEX(0);
             GETGX; GETVX; GETGY;
-            GX->f[0] = 1.0f/sqrtf(EX->f[0]);
+            if(EX->f[0]==0)
+                GX->f[0] = 1.0f/EX->f[0];
+            else if (EX->f[0]<0)
+                GX->f[0] = -NAN;
+            else if (isnan(EX->f[0]))
+                GX->f[0] = EX->f[0];
+            else if (isinf(EX->f[0]))
+                GX->f[0] = 0.0;
+            else
+                GX->f[0] = 1.0f/sqrtf(EX->f[0]);
             if(GX!=VX) {
                 GX->ud[1] = VX->ud[1];
                 GX->q[1] = VX->q[1];
@@ -253,7 +258,9 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
             GETGX;
             GETVX;
             GETGY;
+            MARK_NAN_F_2(VX, EX);
             GX->f[0] = VX->f[0] + EX->f[0];
+            CHECK_NAN_F(GX);
             if(GX!=VX) {
                 GX->ud[1] = VX->ud[1];
                 GX->q[1] = VX->q[1];
@@ -266,7 +273,9 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
             GETGX;
             GETVX;
             GETGY;
+            MARK_NAN_F_2(VX, EX);
             GX->f[0] = VX->f[0] * EX->f[0];
+            CHECK_NAN_F(GX);
             if(GX!=VX) {
                 GX->ud[1] = VX->ud[1];
                 GX->q[1] = VX->q[1];
@@ -335,9 +344,7 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
             GETGX;
             GETVX;
             GETGY;
-            if (VX->f[0] == 0.0 && EX->f[0]  == 0.0)
-                GX->f[0] = EX->f[0];
-            else if (isnan(VX->f[0]) || isnan(EX->f[0]) || isgreater(VX->f[0], EX->f[0]))
+            if (isnan(VX->f[0]) || isnan(EX->f[0]) || islessequal(EX->f[0], VX->f[0]))
                 GX->f[0] = EX->f[0];
             else
                 GX->f[0] = VX->f[0];
@@ -353,11 +360,13 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
             GETGX;
             GETVX;
             GETGY;
+            MARK_NAN_F_2(VX, EX);
             GX->f[0] = VX->f[0] / EX->f[0];
             if(GX!=VX) {
                 GX->ud[1] = VX->ud[1];
                 GX->q[1] = VX->q[1];
             }
+            CHECK_NAN_F(GX);
             GY->u128 = 0;
             break;
         case 0x5F:  /* VMAXSS Gx, Vx, Ex */
@@ -366,9 +375,7 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
             GETGX;
             GETVX;
             GETGY;
-            if (VX->f[0] == 0.0 && EX->f[0]  == 0.0)
-                GX->f[0] = EX->f[0];
-            else if (isnan(VX->f[0]) || isnan(EX->f[0]) || isgreater(EX->f[0], VX->f[0]))
+            if (isnan(VX->f[0]) || isnan(EX->f[0]) || isgreaterequal(EX->f[0], VX->f[0]))
                 GX->f[0] = EX->f[0];
             else
                 GX->f[0] = VX->f[0];
@@ -420,7 +427,7 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
                 GY->u128 = 0;
             break;
 
-        case 0x7E:  /* MOVQ Gx, Ex */
+        case 0x7E:  /* VMOVQ Gx, Ex */
             nextop = F8;
             GETEX(0);
             GETGX;
@@ -438,7 +445,10 @@ uintptr_t RunAVX_F30F(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
                 GETGY;
                 GETEY;
                 memcpy(EY, GY, 16);
-            } // no ymm raz here it seems
+            } else if(MODREG) {
+                GETEY;
+                EY->u128 = 0;
+            }
             break;
 
         case 0xC2:  /* VCMPSS Gx, Vx, Ex, Ib */

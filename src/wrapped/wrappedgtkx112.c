@@ -19,11 +19,8 @@
 #include "myalign.h"
 #include "gtkclass.h"
 
-#ifdef ANDROID
-    const char* gtkx112Name = "libgtk-x11-2.0.so";
-#else
-    const char* gtkx112Name = "libgtk-x11-2.0.so.0";
-#endif
+const char* gtkx112Name = "libgtk-x11-2.0.so.0";
+#define ALTNAME "libgtk-x11-2.0.so"
 
 #define LIBNAME gtkx112
 
@@ -95,19 +92,6 @@ typedef unsigned long (*LFpppppi_t)(void*, void*, void*, void*, void*, int);
         my->gtk1 = 1;
 
 #include "wrappercallback.h"
-
-static box64context_t* context = NULL;
-
-EXPORT uintptr_t my_gtk_signal_connect_full(x64emu_t* emu, void* object, void* name, void* c_handler, void* unsupported, void* data, void* closure, uint32_t signal, int after)
-{
-    if(!context)
-        context = emu->context;
-
-    my_signal_t *sig = new_mysignal(c_handler, data, closure);
-    uintptr_t ret = my->gtk_signal_connect_full(object, name, my_signal_cb, NULL, sig, my_signal_delete, signal, after);
-    printf_log(LOG_DEBUG, "Connecting gtk signal \"%s\" with cb=%p\n", (char*)name, sig);
-    return ret;
-}
 
 // this is quite ineficient, but GCallback is often used, so create a large pool here...
 #define SUPER() \
@@ -712,7 +696,79 @@ static void* reverse_GtkLinkButtonUri_Fct(void* fct)
     return (void*)AddBridge(my_lib->w.bridge, vFppp, fct, 0, NULL);
 }
 
+// GtkKeySnoopFunc ...
+#define GO(A)   \
+static uintptr_t my_GtkKeySnoopFunc_fct_##A = 0;                    \
+static void my_GtkKeySnoopFunc_##A(void* a, void* b, void* c)       \
+{                                                                   \
+    RunFunctionFmt(my_GtkKeySnoopFunc_fct_##A, "ppp", a, b, c);     \
+}
+SUPER()
+#undef GO
+static void* find_GtkKeySnoopFunc_Fct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_GtkKeySnoopFunc_fct_##A == (uintptr_t)fct) return my_GtkKeySnoopFunc_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_GtkKeySnoopFunc_fct_##A == 0) {my_GtkKeySnoopFunc_fct_##A = (uintptr_t)fct; return my_GtkKeySnoopFunc_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for gtk-2 GtkKeySnoopFunc callback\n");
+    return NULL;
+}
+// Event
+#define GO(A)   \
+static uintptr_t my_Event_fct_##A = 0;                                                                              \
+static void my_Event_##A(void* a, void* b, void* c, void* d, void* e, void* f, void* g, void* h, void* i, void* j)  \
+{                                                                                                                   \
+    RunFunctionFmt(my_Event_fct_##A, "pppppppppp", a, b, c, d, e, f, g, h, i, j);                                   \
+}
+SUPER()
+#undef GO
+static void* findEventFct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_Event_fct_##A == (uintptr_t)fct) return my_Event_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_Event_fct_##A == 0) {my_Event_fct_##A = (uintptr_t)fct; return my_Event_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for gtk2 generic Event callback\n");
+    return NULL;
+}
+// TranslateEvent
+#define GO(A)   \
+static uintptr_t my_TranslateEvent_fct_##A = 0;             \
+static void my_TranslateEvent_##A(void* a, void* b)         \
+{                                                           \
+    RunFunctionFmt(my_TranslateEvent_fct_##A, "pp", a, b);  \
+}
+SUPER()
+#undef GO
+static void* findTranslateEvent(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_TranslateEvent_fct_##A == (uintptr_t)fct) return my_TranslateEvent_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_TranslateEvent_fct_##A == 0) {my_TranslateEvent_fct_##A = (uintptr_t)fct; return my_TranslateEvent_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for gtk-2 TranslateEvent callback\n");
+    return NULL;
+}
+
 #undef SUPER
+
+EXPORT uintptr_t my_gtk_signal_connect_full(x64emu_t* emu, void* object, void* name, void* c_handler, void* unsupported, void* data, void* closure, uint32_t signal, int after)
+{
+    return my->gtk_signal_connect_full(object, name, findEventFct(c_handler), unsupported, data, findGDestroyNotifyFct(closure), signal, after);
+}
 
 EXPORT void my_gtk_dialog_add_buttons(x64emu_t* emu, void* dialog, void* first, uintptr_t* b)
 {
@@ -835,15 +891,9 @@ EXPORT int my_gtk_clipboard_set_with_owner(x64emu_t* emu, void* clipboard, void*
     return my->gtk_clipboard_set_with_owner(clipboard, target, n, findClipboadGetFct(f_get), findClipboadClearFct(f_clear), data);
 }
 
-static void* my_translate_func(void* path, my_signal_t* sig)
-{
-    return (void*)RunFunctionFmt(sig->c_handler, "pp", path, sig->data)       ;
-}
-
 EXPORT void my_gtk_stock_set_translate_func(x64emu_t* emu, void* domain, void* f, void* data, void* notify)
 {
-    my_signal_t *sig = new_mysignal(f, data, notify);
-    my->gtk_stock_set_translate_func(domain, my_translate_func, sig, my_signal_delete);
+    my->gtk_stock_set_translate_func(domain, findTranslateEvent(f), data, findGDestroyNotifyFct(notify));
 }
 
 EXPORT void my_gtk_container_forall(x64emu_t* emu, void* container, void* f, void* data)
@@ -1188,11 +1238,50 @@ EXPORT void my_gtk_print_job_send(x64emu_t* emu, void* job, void* f, void* data,
     my->gtk_print_job_send(job, find_GtkPrintJobCompleteFunc_Fct(f), data, findGDestroyNotifyFct(d));
 }
 
+EXPORT uint32_t my_gtk_key_snooper_install(x64emu_t* emu, void* f, void* data)
+{
+    (void)emu;
+    return my->gtk_key_snooper_install(find_GtkKeySnoopFunc_Fct(f), data);
+}
+
+static void addGtk2Alternate(library_t* lib)
+{
+    #define GO(A, W) AddAutomaticBridge(lib->w.bridge, W, dlsym(lib->w.lib, #A), 0, #A)
+    GO(gtk_marshal_BOOLEAN__POINTER,                            vFppuppp);
+    GO(gtk_marshal_BOOLEAN__POINTER_INT_INT,                    vFppuppp);
+    GO(gtk_marshal_BOOLEAN__POINTER_INT_INT_UINT,               vFppuppp);
+    GO(gtk_marshal_BOOLEAN__POINTER_POINTER_INT_INT,            vFppuppp);
+    GO(gtk_marshal_BOOLEAN__POINTER_STRING_STRING_POINTER,      vFppuppp);
+    GO(gtk_marshal_BOOLEAN__VOID,                               vFppuppp);
+    GO(gtk_marshal_ENUM__ENUM,                                  vFppuppp);
+    GO(gtk_marshal_INT__POINTER,                                vFppuppp);
+    GO(gtk_marshal_INT__POINTER_CHAR_CHAR,                      vFppuppp);
+    GO(gtk_marshal_VOID__ENUM_FLOAT,                            vFppuppp);
+    GO(gtk_marshal_VOID__ENUM_FLOAT_BOOLEAN,                    vFppuppp);
+    GO(gtk_marshal_VOID__INT_INT,                               vFppuppp);
+    GO(gtk_marshal_VOID__INT_INT_POINTER,                       vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_INT,                           vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_INT_INT_POINTER_UINT_UINT,     vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_POINTER,                       vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_POINTER_POINTER,               vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_POINTER_UINT_UINT,             vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_STRING_STRING,                 vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_UINT,                          vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_UINT_ENUM,                     vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_UINT_UINT,                     vFppuppp);
+    GO(gtk_marshal_VOID__STRING_INT_POINTER,                    vFppuppp);
+    GO(gtk_marshal_VOID__UINT_POINTER_UINT_ENUM_ENUM_POINTER,   vFppuppp);
+    GO(gtk_marshal_VOID__UINT_POINTER_UINT_UINT_ENUM,           vFppuppp);
+    GO(gtk_marshal_VOID__UINT_STRING,                           vFppuppp);
+    #undef GO
+}
+
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #define CUSTOM_INIT \
+    addGtk2Alternate(lib);                                                      \
     SetGtkObjectID(my->gtk_object_get_type());                                  \
     SetGtkWidget2ID(my->gtk_widget_get_type());                                 \
     SetGtkContainer2ID(my->gtk_container_get_type());                           \
@@ -1217,10 +1306,6 @@ EXPORT void my_gtk_print_job_send(x64emu_t* emu, void* job, void* f, void* data,
     SetGtkMenuBar2ID(my->gtk_menu_bar_get_type());                              \
     SetGtkTextView2ID(my->gtk_text_view_get_type());
 
-#ifdef ANDROID
-#define NEEDED_LIBS "libgdk-x11-2.0.so", "libpangocairo-1.0.so"
-#else
 #define NEEDED_LIBS "libgdk-x11-2.0.so.0", "libpangocairo-1.0.so.0"
-#endif
 
 #include "wrappedlib_init.h"

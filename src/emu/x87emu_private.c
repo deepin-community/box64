@@ -81,7 +81,7 @@ void fpu_fbld(x64emu_t* emu, uint8_t* s) {
 // long double (80bits) -> double (64bits)
 void LD2D(void* ld, void* d)
 {
-    if(box64_x87_no80bits) {
+    if(BOX64ENV(x87_no80bits)) {
         *(uint64_t*)d = *(uint64_t*)ld;
         return;
     }
@@ -99,39 +99,31 @@ void LD2D(void* ld, void* d)
     val.f.ud[1] = *(uint32_t*)(char*)(ld+4);
     val.b  = *(int16_t*)((char*)ld+8);
     #endif
-    int32_t exp64 = (((uint32_t)(val.b&0x7fff) - BIAS80) + BIAS64);
-    int32_t exp64final = exp64&0x7ff;
     // do specific value first (0, infinite...)
     // bit 63 is "integer part"
-    // bit 62 is sign
     if((uint32_t)(val.b&0x7fff)==0x7fff) {
         // infinity and nans
-        int t = 0; //nan
-        switch((val.f.ud[1]>>30)) {
-            case 0: if((val.f.ud[1]&(1<<29))==0) t = 1;
-                    break;
-            case 2: if((val.f.ud[1]&(1<<29))==0) t = 1;
-                    break;
-        }
+        int t = (val.f.q&0x7fffffffffffffffLL)?0:1;
         if(t) {    // infinite
-            result.d = HUGE_VAL;
-        } else {      // NaN
-            result.ud[1] = 0x7ff << 20;
+            result.ud[1] = (val.b>>4) << 20;
             result.ud[0] = 0;
+        } else {      // NaN
+            result.ud[1] = (val.b>>4) << 20 | ((val.f.q>>(63-20))&0x000fffff);
+            result.ud[0] = (val.f.q>>(63-56))&0xffffffff;
+            if(!(result.q&0x000fffffffffffffLL))
+                result.q |= 1;
         }
-        if(val.b&0x8000)
-            result.ud[1] |= 0x80000000;
         *(uint64_t*)d = result.q;
         return;
     }
+    int32_t exp64 = (((uint32_t)(val.b&0x7fff) - BIAS80) + BIAS64);
+    int32_t exp64final = exp64&0x7ff;
     if(((uint32_t)(val.b&0x7fff)==0) || (exp64<-1074)) {
         //if(val.f.q==0)
         // zero
         //if(val.f.q!=0)
         // denormal, but that's to small value for double 
-        uint64_t r = 0;
-        if(val.b&0x8000)
-            r |= 0x8000000000000000L;
+        uint64_t r = (val.b&0x8000)?0x8000000000000000LL:0LL;
         *(uint64_t*)d = r;
         return;
     }
@@ -168,7 +160,7 @@ void LD2D(void* ld, void* d)
 // double (64bits) -> long double (80bits)
 void D2LD(void* d, void* ld)
 {
-    if(box64_x87_no80bits) {
+    if(BOX64ENV(x87_no80bits)) {
         *(uint64_t*)ld = *(uint64_t*)d;
         return;
     }
@@ -184,10 +176,7 @@ void D2LD(void* d, void* ld)
     if((s.q&0x7fffffffffffffffL)==0) {
         // zero...
         val.f.q = 0;
-        if(s.ud[1]&0x8000)
-            val.b = 0x8000;
-        else
-            val.b = 0;
+        val.b = (s.ud[1]&0x80000000)?0x8000:0;
         memcpy(ld, &val, 10);
         return;
     }
@@ -203,14 +192,14 @@ void D2LD(void* d, void* ld)
         if(mant80==0x0)
             mant80final = 0x8000000000000000L; //infinity
         else
-            mant80final = 0xc000000000000000L; //(quiet)NaN
+            mant80final |= 0x8000000000000000L; //(quiet)NaN
     } else {
         if(exp80!=0){ 
             mant80final |= 0x8000000000000000L;
             exp80final += (BIAS80 - BIAS64);
-        } else if(mant80final!=0) {
-            // denormals -> normal
-            exp80final = BIAS80-1023;
+        } else {
+            // denormals -> normal (the case of 0 has been dealt with already)
+            exp80final = BIAS80-BIAS64;
             int one = __builtin_clz(mant80final) + 1;
             exp80final -= one;
             mant80final<<=one;
@@ -225,7 +214,7 @@ void D2LD(void* d, void* ld)
 
 double FromLD(void* ld)
 {
-    if(box64_x87_no80bits)
+    if(BOX64ENV(x87_no80bits))
         return *(double*)ld;
     double ret; // cannot add = 0; it break factorio (issue when calling fmodl)
     LD2D(ld, &ret);
@@ -255,7 +244,7 @@ void fpu_loadenv(x64emu_t* emu, char* p, int b16)
         emu->sw.x16 = *p16++;
         // tagword: 2bits*8
         // tags... (only full = 0b11 / free = 0b00)
-        emu->fpu_tags = ~*(p16++);
+        emu->fpu_tags = *(p16++);
         // intruction pointer: 16bits
         // data (operand) pointer: 16bits
         // last opcode: 11bits save: 16bits restaured (1st and 2nd opcode only)
@@ -264,8 +253,8 @@ void fpu_loadenv(x64emu_t* emu, char* p, int b16)
         emu->cw.x16 = *p32++;
         emu->sw.x16 = *p32++;
         // tagword: 2bits*8
-        // tags... (only full = 0b11 / free = 0b00)
-        emu->fpu_tags = ~*(p32++);
+        // tags... (only free = 0b11 / full = 0b00)
+        emu->fpu_tags = *(p32++);
         // intruction pointer: 16bits
         // data (operand) pointer: 16bits
         // last opcode: 11bits save: 16bits restaured (1st and 2nd opcode only)
@@ -282,14 +271,14 @@ void fpu_savenv(x64emu_t* emu, char* p, int b16)
         *p16++ = emu->sw.x16;
         // tagword: 2bits*8
         // tags...
-        *p16++ = ~emu->fpu_tags;
+        *p16++ = emu->fpu_tags;
     } else {
         uint32_t* p32 = (uint32_t*)p;
         *p32++ = emu->cw.x16;
         *p32++ = emu->sw.x16;
         // tagword: 2bits*8
         // tags...
-        *p32++ = ~emu->fpu_tags;
+        *p32++ = emu->fpu_tags;
 
     }
     // other stuff are not pushed....
@@ -311,8 +300,8 @@ typedef struct xsave32_s {
     uint32_t MxCsr;              /* 018 */
     uint32_t MxCsr_Mask;         /* 01c */
     sse_regs_t FloatRegisters[8];/* 020 */  // fpu/mmx are store in 128bits here
-    sse_regs_t XmmRegisters[16]; /* 0a0 */
-    uint8_t  Reserved4[96];      /* 1a0 */
+    sse_regs_t XmmRegisters[8];  /* 0a0 */
+    uint8_t  Reserved4[56*4];    /* 120 */
 } xsave32_t;
 typedef struct xsave64_s {
     uint16_t ControlWord;        /* 000 */
@@ -354,12 +343,12 @@ void fpu_fxsave32(x64emu_t* emu, void* ed)
     for(int i=0; i<8; ++i)
         memcpy(&p->FloatRegisters[i].q[0], (i<stack)?&ST(i):&emu->mmx[i], sizeof(mmx87_regs_t));
     // copy SSE regs
-    for(int i=0; i<16; ++i)
-        memcpy(&p->XmmRegisters[i], &emu->xmm[i], 16);
+    memcpy(p->XmmRegisters, emu->xmm, 8*16);
 }
 
 void fpu_fxsave64(x64emu_t* emu, void* ed)
 {
+    // the subtelties of the REX.W are not handled in fxsave64/fxrstor64
     xsave64_t *p = (xsave64_t*)ed;
     // should save flags & all
     int top = emu->top&7;
@@ -381,8 +370,7 @@ void fpu_fxsave64(x64emu_t* emu, void* ed)
     for(int i=0; i<8; ++i)
         memcpy(&p->FloatRegisters[i].q[0], (i<stack)?&ST(i):&emu->mmx[i], sizeof(mmx87_regs_t));
     // copy SSE regs
-    for(int i=0; i<16; ++i)
-        memcpy(&p->XmmRegisters[i], &emu->xmm[i], 16);
+    memcpy(p->XmmRegisters, emu->xmm, 16*16);
 }
 
 void fpu_fxrstor32(x64emu_t* emu, void* ed)
@@ -391,7 +379,7 @@ void fpu_fxrstor32(x64emu_t* emu, void* ed)
     emu->cw.x16 = p->ControlWord;
     emu->sw.x16 = p->StatusWord;
     emu->mxcsr.x32 = p->MxCsr;
-    if(box64_sse_flushto0)
+    if(BOX64ENV(sse_flushto0))
         applyFlushTo0(emu);
     emu->top = emu->sw.f.F87_TOP;
     uint8_t tags = p->TagWord;
@@ -406,17 +394,17 @@ void fpu_fxrstor32(x64emu_t* emu, void* ed)
     for(int i=0; i<8; ++i)
         memcpy((i<stack)?&ST(i):&emu->mmx[i], &p->FloatRegisters[i].q[0], sizeof(mmx87_regs_t));
     // copy SSE regs
-    for(int i=0; i<16; ++i)
-        memcpy(&emu->xmm[i], &p->XmmRegisters[i], 16);
+    memcpy(emu->xmm, p->XmmRegisters, 8*16);
 }
 
 void fpu_fxrstor64(x64emu_t* emu, void* ed)
 {
+    // the subtelties of the REX.W are not handled in fxsave64/fxrstor64
     xsave64_t *p = (xsave64_t*)ed;
     emu->cw.x16 = p->ControlWord;
     emu->sw.x16 = p->StatusWord;
     emu->mxcsr.x32 = p->MxCsr;
-    if(box64_sse_flushto0)
+    if(BOX64ENV(sse_flushto0))
         applyFlushTo0(emu);
     emu->top = emu->sw.f.F87_TOP;
     uint8_t tags = p->TagWord;
@@ -431,8 +419,7 @@ void fpu_fxrstor64(x64emu_t* emu, void* ed)
     for(int i=0; i<8; ++i)
         memcpy((i<stack)?&ST(i):&emu->mmx[i], &p->FloatRegisters[i].q[0], sizeof(mmx87_regs_t));
     // copy SSE regs
-    for(int i=0; i<16; ++i)
-        memcpy(&emu->xmm[i], &p->XmmRegisters[i], 16);
+    memcpy(emu->xmm, p->XmmRegisters, 16*16);
 }
 
 typedef struct xsaveheader_s {
@@ -446,7 +433,7 @@ void fpu_xsave_mask(x64emu_t* emu, void* ed, int is32bits, uint64_t mask)
     xsave64_t *p = (xsave64_t*)ed;
     xsaveheader_t *h = (xsaveheader_t*)(p+1);
     uint32_t rfbm = (0b111&mask);
-    h->xstate_bv =(h->xstate_bv&~0b111)|rfbm;
+    h->xstate_bv =(h->xstate_bv&~mask)|rfbm;
     h->xcomp_bv = 0;
     if(h->xstate_bv&0b001) {
         int top = emu->top&7;
@@ -473,13 +460,11 @@ void fpu_xsave_mask(x64emu_t* emu, void* ed, int is32bits, uint64_t mask)
     }
     // copy SSE regs
     if(h->xstate_bv&0b10) {
-        for(int i=0; i<(is32bits?8:16); ++i)
-            memcpy(&p->XmmRegisters[i], &emu->xmm[i], 16);
+        memcpy(&p->XmmRegisters[0], &emu->xmm[0], 16*(is32bits?8:16));
     }
     if(h->xstate_bv&0b100) {
         sse_regs_t* avx = (sse_regs_t*)(h+1);
-        for(int i=0; i<(is32bits?8:16); ++i)
-            memcpy(&avx[i], &emu->ymm[i], 16);
+        memcpy(&avx[0], &emu->ymm[0], 16*(is32bits?8:16));
     }
 }
 
@@ -491,10 +476,14 @@ void fpu_xsave(x64emu_t* emu, void* ed, int is32bits)
 
 void fpu_xrstor(x64emu_t* emu, void* ed, int is32bits)
 {
+    uint64_t mask = R_EAX | (((uint64_t)R_EDX)<<32);
+    return fpu_xrstor_mask(emu, ed, is32bits, mask);
+}
+
+void fpu_xrstor_mask(x64emu_t* emu, void* ed, int is32bits, uint64_t mask) {
     xsave64_t *p = (xsave64_t*)ed;
     xsaveheader_t *h = (xsaveheader_t*)(p+1);
     int compressed = (h->xcomp_bv>>63);
-    uint64_t mask = R_EAX | (((uint64_t)R_EDX)<<32);
     uint32_t rfbm = (0b111&mask);
     uint32_t to_restore = rfbm & h->xstate_bv;
     uint32_t to_init = rfbm & ~h->xstate_bv;
@@ -503,7 +492,7 @@ void fpu_xrstor(x64emu_t* emu, void* ed, int is32bits)
         emu->cw.x16 = p->ControlWord;
         emu->sw.x16 = p->StatusWord;
         emu->mxcsr.x32 = p->MxCsr;
-        if(box64_sse_flushto0)
+        if(BOX64ENV(sse_flushto0))
             applyFlushTo0(emu);
         emu->top = emu->sw.f.F87_TOP;
         uint8_t tags = p->TagWord;
@@ -525,20 +514,16 @@ void fpu_xrstor(x64emu_t* emu, void* ed, int is32bits)
     }
     if(to_restore&0b010) {
         // copy SSE regs
-        for(int i=0; i<(is32bits?8:16); ++i)
-            memcpy(&emu->xmm[i], &p->XmmRegisters[i], 16);
+        memcpy(&emu->xmm[0], &p->XmmRegisters[0], 16*(is32bits?8:16));
     } else if(to_init&0b010) {
-        for(int i=0; i<(is32bits?8:16); ++i)
-            memset(&emu->xmm[i], 0, 16);
+        memset(&emu->xmm[0], 0, 16*(is32bits?8:16));
     }
     if(to_restore&0b100) {
         // copy AVX upper part of regs
         sse_regs_t* avx = (sse_regs_t*)(h+1);
-        for(int i=0; i<(is32bits?8:16); ++i)
-            memcpy(&emu->ymm[i], &avx[i], 16);
+        memcpy(&emu->ymm[0], &avx[0], 16*(is32bits?8:16));
     } else if(to_init&0b100) {
-        for(int i=0; i<(is32bits?8:16); ++i)
-            memset(&emu->ymm[i], 0, 16);
+        memset(&emu->ymm[0], 0, 16*(is32bits?8:16));
     }
 }
 
@@ -585,17 +570,22 @@ uint16_t cvtf32_16(uint32_t v, uint8_t rounding)
     if(!in.exponant) {
         // zero and denormals
         ret.exponant = 0;
-        ret.fraction = in.fraction>>13;
+        if(in.fraction && ((rounding==1 && ret.sign) || ((rounding==2) && !ret.sign))) 
+            ret.fraction = 1; // rounding artifact
+        else
+            ret.fraction = 0;   // no way a 32bits denormal is something else the 0 in 16bits
         return ret.u16;
     } else if(in.exponant==0b11111111) {
         // nan and infinites
         ret.exponant = 0b11111;
         ret.fraction = in.fraction;
+        if(in.fraction && !ret.fraction)
+            ret.fraction = 0b1000000000;
         return ret.u16;
     } else {
         // regular numbers
         int e = in.exponant - 127;
-        uint16_t f = (in.fraction>>13);
+        uint16_t f = (in.fraction>>13)|0b10000000000;   // add back implicit msb
         uint16_t r = in.fraction&0b1111111111111;
         switch(rounding) {
             case 0: // nearest even
@@ -611,15 +601,25 @@ uint16_t cvtf32_16(uint32_t v, uint8_t rounding)
             case 3: // truncate
                 break;
         }
-        if(f>0b1111111111) {
+        if(f>0b11111111111) {   // implicit msb included
             ++e;
             f>>=1;
         }
-        // remove msb, it's implicit
+        // remove implicit msb
+        if(f) {
+            while(!(f&0b10000000000)) {
+                f<<=1;
+                --e;
+            }
+        }
+        // there is no msb to remove, as it's implicit and was not added back before
         if(!f) e = -15;
         else if(e<-14) { 
             // flush to zero
-            e = -15; f = 0;
+            f >>= (-15-e);
+            e = -15;
+            if((rounding==1 && ret.sign) || ((rounding==2) && !ret.sign)) 
+                f = 1; // rounding artifact
         }
         else if(e>15) { 
             if((rounding==1 && !in.sign) || (rounding==2 && in.sign) || (rounding==3)) {
@@ -631,7 +631,7 @@ uint16_t cvtf32_16(uint32_t v, uint8_t rounding)
                 f=0;
                 e = 16;
             }
-        }
+        } else f&=0b1111111111; // remove implicit msb (bit 11)
         ret.fraction = f;
         ret.exponant = e+15;
     }

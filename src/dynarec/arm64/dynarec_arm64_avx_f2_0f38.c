@@ -5,10 +5,8 @@
 
 #include "debug.h"
 #include "box64context.h"
-#include "dynarec.h"
+#include "box64cpu.h"
 #include "emu/x64emu_private.h"
-#include "emu/x64run_private.h"
-#include "x64run.h"
 #include "x64emu.h"
 #include "box64stack.h"
 #include "callback.h"
@@ -22,7 +20,7 @@
 #include "arm64_printer.h"
 #include "dynarec_arm64_private.h"
 #include "dynarec_arm64_functions.h"
-#include "dynarec_arm64_helper.h"
+#include "../dynarec_helper.h"
 
 uintptr_t dynarec64_AVX_F2_0F38(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst, vex_t vex, int* ok, int* need_epilog)
 {
@@ -60,7 +58,36 @@ uintptr_t dynarec64_AVX_F2_0F38(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip
     rex_t rex = vex.rex;
 
     switch(opcode) {
-
+        case 0xF5:
+            INST_NAME("PDEP Gd, Ed, Vd");
+            nextop = F8;
+            GETGD;
+            GETED(0);
+            GETVD;
+            if(gd==ed || gd==vd) {
+                gb1 = gd;
+                gd = x4;
+            } else {
+                gb1 = 0;
+            }
+            // x3 = mask of mask, loop while not 0
+            MOV32w(gd, 0);
+            MOV64x(x2, 1);
+            MOV64x(x3, 1);
+            MARK;
+            TSTxw_REG(ed, x3);
+            B_MARK2(cEQ);
+            TSTxw_REG(vd, x2);
+            B_MARK3(cEQ);
+            ORRxw_REG(gd, gd, x3);
+            MARK3;
+            LSLxw_IMM(x2, x2, 1);
+            MARK2;
+            LSLxw_IMM(x3, x3, 1);
+            CBNZxw_MARK(x3);
+            if(gb1)
+                MOVxw_REG(gb1, gd);
+            break;
         case 0xF6:
             INST_NAME("MULX Gd, Vd, Ed (,RDX)");
             nextop = F8;
@@ -69,13 +96,19 @@ uintptr_t dynarec64_AVX_F2_0F38(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip
             GETVD;
             if(rex.w) {
                 // 64bits mul
-                UMULH(x3, xRDX, ed);
-                MULx(vd, xRDX, ed);
-                MOVx_REG(gd, x3);
+                if((gd==xRDX) || (gd==ed) || (gd==vd))
+                    gb1 = x3;
+                else
+                    gb1 = gd;
+                UMULH(gb1, xRDX, ed);
+                if(gd!=vd) {MULx(vd, xRDX, ed);}
+                if(gb1==x3) {
+                    MOVx_REG(gd, gb1);
+                }
             } else {
                 // 32bits mul
                 UMULL(x3, xRDX, ed);
-                MOVw_REG(vd, x3);
+                if(gd!=vd) {MOVw_REG(vd, x3);}
                 LSRx(gd, x3, 32);
             }
             break;

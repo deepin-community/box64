@@ -29,6 +29,9 @@
 #define SF_NODF     16
 #define SF_SET_NODF (SF_SET|SF_NODF)
 
+#define NAT_FLAGS_FUSION   0
+#define NAT_FLAGS_NOFUSION 1
+
 typedef struct instruction_x64_s {
     uintptr_t   addr;       //address of the instruction
     int32_t     size;       // size of the instruction
@@ -36,10 +39,10 @@ typedef struct instruction_x64_s {
     int         jmp_insts;  // instuction to jump to (-1 if out of the block)
     uint8_t     jmp_cond:1;   // 1 of conditionnal jump
     uint8_t     has_next:1;   // does this opcode can continue to the next?
-    uint8_t     has_callret:1;    // this instruction have an optimised call setup
+    uint8_t     has_callret:1;    // this instruction have an optimized call setup
     uint8_t     alive:1;    // this opcode gets executed (0 if dead code in that block)
+    uint8_t     self_loop:1;    // this is a landing address for a self-loop (loop on itslef with no exit)
     uint8_t     barrier;    // next instruction is a jump point, so no optim allowed
-    uint8_t     barrier_next;   // next instruction needs a barrier
     uint8_t     state_flags;// One of SF_XXX state
     uint8_t     use_flags;  // 0 or combination of X_?F
     uint8_t     set_flags;  // 0 or combination of X_?F
@@ -48,7 +51,5 @@ typedef struct instruction_x64_s {
     uint8_t     need_before;// calculated
     uint8_t     need_after; // calculated
 } instruction_x64_t;
-
-void printf_x64_instruction(zydis_dec_t* dec, instruction_x64_t* inst, const char* name);
 
 #endif //__DYNAREC_PRIVATE_H_

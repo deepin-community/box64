@@ -78,7 +78,7 @@ typedef struct elib_s {
 typedef struct library_s {
     char*               name;   // <> path
     char*               path;   // original path
-    int8_t              nbdot;  // nombre of "." after .so
+    int8_t              nbdot;  // number of "." after .so
     int8_t              type;   // 0: native(wrapped) 1: emulated(elf) -1: undetermined
     uint8_t             deepbind;
     wrappedlib_fini_t   fini;
@@ -133,11 +133,29 @@ typedef struct linkmap_s {
     library_t*  l_lib;
 
 } linkmap_t;
+#ifdef BOX32
+typedef struct linkmap32_s {
+    // actual struct link_map
+    Elf32_Addr  l_addr;
+    ptr_t       l_name; // char*
+    ptr_t       l_ld;   //Elf64_Dyn*
+    ptr_t l_next, l_prev;   // struct linkmap32_s *
+    // custom
+    library_t*  l_lib;
+
+} linkmap32_t;
+#endif
 
 linkmap_t* getLinkMapLib(library_t* lib);
 linkmap_t* getLinkMapElf(elfheader_t* h);
 linkmap_t* addLinkMapLib(library_t* lib);
 void removeLinkMapLib(library_t* lib);
+#ifdef BOX32
+linkmap32_t* getLinkMapLib32(library_t* lib);
+linkmap32_t* getLinkMapElf32(elfheader_t* h);
+linkmap32_t* addLinkMapLib32(library_t* lib);
+void removeLinkMapLib32(library_t* lib);
+#endif
 
 int FiniLibrary(library_t* lib, x64emu_t* emu);
 void Free1Library(library_t **lib, x64emu_t* emu);

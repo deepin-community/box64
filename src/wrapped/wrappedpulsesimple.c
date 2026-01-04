@@ -17,22 +17,15 @@
 #include "librarian.h"
 #include "myalign.h"
 
-#ifdef ANDROID
-    const char* pulsesimpleName = "libpulse-simple.so";
-#else
-    const char* pulsesimpleName = "libpulse-simple.so.0";
-#endif
+const char* pulsesimpleName = "libpulse-simple.so.0";
+#define ALTNAME "libpulse-simple.so"
 
 #define LIBNAME pulsesimple
 
-#define PRE_INIT        \
-    if(box64_nopulse)   \
+#define PRE_INIT          \
+    if(BOX64ENV(nopulse)) \
         return -1;
 
-#ifdef ANDROID
-#define NEEDED_LIBS "libpulse.so"
-#else
 #define NEEDED_LIBS "libpulse.so.0"
-#endif
 
 #include "wrappedlib_init.h"

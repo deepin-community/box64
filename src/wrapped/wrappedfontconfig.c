@@ -18,11 +18,8 @@
 #include "emu/x64emu_private.h"
 #include "myalign.h"
 
-#ifdef ANDROID
-    const char* fontconfigName = "libfontconfig.so";
-#else
-    const char* fontconfigName = "libfontconfig.so.1";
-#endif
+const char* fontconfigName = "libfontconfig.so.1";
+#define ALTNAME "libfontconfig.so"
 
 #define LIBNAME fontconfig
 

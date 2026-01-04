@@ -1,4 +1,4 @@
-// build with  gcc -O0 -g -msse -msse2 -mssse3 -msse4.1 -mavx test30.c -o test30
+// build with  gcc -O0 -g -msse -msse2 -mssse3 -msse4.1 -mavx test30.c -o test30 -march=native
 #include <inttypes.h>
 #include <string.h>
 #include <stdio.h>
@@ -8,6 +8,8 @@
 #include <math.h>
 #include <pmmintrin.h>
 #include <immintrin.h> 
+#include <sys/mman.h>
+#include <unistd.h>
 
 typedef unsigned char u8x16 __attribute__ ((vector_size (16)));
 typedef unsigned short u16x8 __attribute__ ((vector_size (16)));
@@ -15,6 +17,9 @@ typedef unsigned int  u32x4 __attribute__ ((vector_size (16)));
 typedef unsigned long int  u64x2 __attribute__ ((vector_size (16)));
 typedef float  f32x4 __attribute__ ((vector_size (16)));
 typedef double d64x2 __attribute__ ((vector_size (16)));
+int testVPMASKMOV();
+int testVMASKMOVP();
+static int ACCESS_TEST = 1;
 
 typedef union {
         __m128i mm;
@@ -108,8 +113,19 @@ const v128 b128_32 = {.u32 = {
 const v128 b128_64 = {.u64 = {
     0x0000000000000001LL, 0x8000000000000000LL
 }};
+
+const v128 c128_8 = {.u8 = {
+    0xfe, 0x7e, 0x7f, 0x81, 0x10, 0x90, 0x0f, 0xf0,
+    0xf8, 0x77, 0x87, 0xf6, 0x03, 0xe1, 0x50, 0x21
+}};
+const v128 c128_16 = {.u16 = {
+    0x7ffe, 0x0020, 0x7f00, 0x0001, 0x8000, 0xa050, 0xfff1, 0x8008
+}};
 const v128 c128_32 = {.u32 = {
     0x00000001, 0x80000000, 0x80000005, 0x0000fffe
+}};
+const v128 c128_64 = {.u64 = {
+    0x7fffffffffffffffLL, 0x0000000000000004LL
 }};
 
 const v128 a128_pd = {.d64 = { 1.0, 2.0}};
@@ -147,7 +163,7 @@ void print_64(v128 v) {
 void print_ps(v128 v) {
     for(int i=0; i<4; ++i)
         if(isnanf(v.f32[i]))
-            printf("nan ");
+            printf("%cnan ", (v.u32[i]&0x80000000)?'-':'+');
         else
             printf("%g ", v.f32[i]);
 }
@@ -364,7 +380,14 @@ printf(N " %g, %g => %g\n", b, a, *(float*)&r);
  GO2pd(A, B, a128_pd, d128_pd)  \
  GO2pd(A, B, b128_pd, d128_pd)  \
  GO2pd(A, B, c128_pd, d128_pd)  \
- GO2pd(A, B, d128_pd, d128_pd)
+ GO2pd(A, B, d128_pd, d128_pd)  \
+ GO2pd(A, B, a128_pd, reverse_pd(b128_pd))  \
+ GO2pd(A, B, b128_pd, reverse_pd(c128_pd))  \
+ GO2pd(A, B, a128_pd, reverse_pd(d128_pd))  \
+ GO2pd(A, B, b128_pd, reverse_pd(d128_pd))  \
+ GO2pd(A, B, c128_pd, reverse_pd(d128_pd))  \
+ GO2pd(A, B, d128_pd, reverse_pd(d128_pd))
+
 
  #define MULITGO2Cpd(A, B, I)       \
  GO2Cpd(A, B, a128_pd, b128_pd, I)  \
@@ -389,12 +412,39 @@ printf(N " %g, %g => %g\n", b, a, *(float*)&r);
  GO1ps2dq(A, B, d128_ps)
 
  #define MULITGO2Cps(A, B, I)       \
+ GO2Cps(A, B, a128_ps, a128_ps, I)  \
  GO2Cps(A, B, a128_ps, b128_ps, I)  \
- GO2Cps(A, B, b128_ps, c128_ps, I)  \
+ GO2Cps(A, B, a128_ps, c128_ps, I)  \
  GO2Cps(A, B, a128_ps, d128_ps, I)  \
+ GO2Cps(A, B, b128_ps, a128_ps, I)  \
+ GO2Cps(A, B, b128_ps, b128_ps, I)  \
+ GO2Cps(A, B, b128_ps, c128_ps, I)  \
  GO2Cps(A, B, b128_ps, d128_ps, I)  \
+ GO2Cps(A, B, c128_ps, a128_ps, I)  \
+ GO2Cps(A, B, c128_ps, b128_ps, I)  \
+ GO2Cps(A, B, c128_ps, c128_ps, I)  \
  GO2Cps(A, B, c128_ps, d128_ps, I)  \
- GO2Cps(A, B, d128_ps, d128_ps, I)
+ GO2Cps(A, B, d128_ps, a128_ps, I)  \
+ GO2Cps(A, B, d128_ps, b128_ps, I)  \
+ GO2Cps(A, B, d128_ps, c128_ps, I)  \
+ GO2Cps(A, B, d128_ps, d128_ps, I)  \
+
+ #define MULITGO2Cps_nan(A, B, I)   \
+ GO2Cps(A, B, a128_ps, a128_ps, I)  \
+ GO2Cps(A, B, a128_ps, b128_ps, I)  \
+ GO2Cps(A, B, a128_ps, c128_ps, I)  \
+ GO2Cps(A, B, b128_ps, a128_ps, I)  \
+ GO2Cps(A, B, b128_ps, b128_ps, I)  \
+ GO2Cps(A, B, b128_ps, c128_ps, I)  \
+ GO2Cps(A, B, c128_ps, a128_ps, I)  \
+ GO2Cps(A, B, c128_ps, b128_ps, I)  \
+ GO2Cps(A, B, c128_ps, c128_ps, I)
+
+ #define MULITGO2Cps_naninf(A, B, I)\
+ GO2Cps(A, B, a128_ps, a128_ps, I)  \
+ GO2Cps(A, B, a128_ps, b128_ps, I)  \
+ GO2Cps(A, B, b128_ps, a128_ps, I)  \
+ GO2Cps(A, B, b128_ps, b128_ps, I)  \
 
  #define MULTIGO2sd(A, B)                   \
  GO2sd(A, B, a128_pd, a128_pd)              \
@@ -410,6 +460,54 @@ printf(N " %g, %g => %g\n", b, a, *(float*)&r);
  GO2sd(A, B, b128_pd, reverse_pd(d128_pd))  \
  GO2sd(A, B, b128_pd, reverse_pd(d128_pd))
 
+ #define MULTIGO1Ci(A, S, B, I)             \
+ GO1C(A, S, B, a128_##S, I)                 \
+ GO1C(A, S, B, b128_##S, I)                 \
+ GO1C(A, S, B, b128_##S, I)                 \
+
+#define MULTIGO2i(A, S, B)                  \
+ GO2(A, S, B, a128_##S, a128_##S)           \
+ GO2(A, S, B, a128_##S, b128_##S)           \
+ GO2(A, S, B, a128_##S, c128_##S)           \
+ GO2(A, S, B, b128_##S, a128_##S)           \
+ GO2(A, S, B, b128_##S, b128_##S)           \
+ GO2(A, S, B, b128_##S, c128_##S)           \
+ GO2(A, S, B, c128_##S, a128_##S)           \
+ GO2(A, S, B, c128_##S, b128_##S)           \
+ GO2(A, S, B, c128_##S, c128_##S)           \
+
+#define MULTIGO2ui(A, S, B)                 \
+ GO2u(A, S, B, a128_##S, a128_##S)          \
+ GO2u(A, S, B, a128_##S, b128_##S)          \
+ GO2u(A, S, B, a128_##S, c128_##S)          \
+ GO2u(A, S, B, b128_##S, a128_##S)          \
+ GO2u(A, S, B, b128_##S, b128_##S)          \
+ GO2u(A, S, B, b128_##S, c128_##S)          \
+ GO2u(A, S, B, c128_##S, a128_##S)          \
+ GO2u(A, S, B, c128_##S, b128_##S)          \
+ GO2u(A, S, B, c128_##S, c128_##S)          \
+
+#define MULTIGO2fi(A, B)                    \
+ GO2f(A, B, a128_8, a128_8)                 \
+ GO2f(A, B, a128_8, b128_8)                 \
+ GO2f(A, B, a128_8, c128_8)                 \
+ GO2f(A, B, b128_8, a128_8)                 \
+ GO2f(A, B, b128_8, b128_8)                 \
+ GO2f(A, B, b128_8, c128_8)                 \
+ GO2f(A, B, c128_8, a128_8)                 \
+ GO2f(A, B, c128_8, b128_8)                 \
+ GO2f(A, B, c128_8, c128_8)                 \
+
+#define MULTIGO2Ci(A, S, B, I)              \
+ GO2C(A, S, B, a128_##S, a128_##S, I)       \
+ GO2C(A, S, B, a128_##S, b128_##S, I)       \
+ GO2C(A, S, B, a128_##S, c128_##S, I)       \
+ GO2C(A, S, B, b128_##S, a128_##S, I)       \
+ GO2C(A, S, B, b128_##S, b128_##S, I)       \
+ GO2C(A, S, B, b128_##S, c128_##S, I)       \
+ GO2C(A, S, B, c128_##S, a128_##S, I)       \
+ GO2C(A, S, B, c128_##S, b128_##S, I)       \
+ GO2C(A, S, B, c128_##S, c128_##S, I)       \
 
  GO2(shuffle, 8, pshufb, a128_8, b128_8)
  GO2(hadd, 16, phaddw, a128_16, b128_16)
@@ -420,7 +518,12 @@ printf(N " %g, %g => %g\n", b, a, *(float*)&r);
  GO2(sign, 8, psignb, a128_8, b128_8)
  GO2(sign, 16, psignw, a128_16, b128_16)
  GO2(sign, 32, psignd, a128_32, b128_32)
+ GO2(mulhrs, 16, pmulhrsw, a128_16, a128_16)
  GO2(mulhrs, 16, pmulhrsw, a128_16, b128_16)
+ GO2(mulhrs, 16, pmulhrsw, a128_16, c128_16)
+ GO2(mulhrs, 16, pmulhrsw, b128_16, b128_16)
+ GO2(mulhrs, 16, pmulhrsw, a128_16, c128_16)
+ GO2(mulhrs, 16, pmulhrsw, c128_16, c128_16)
  GO3PS(blendv, 32, a128_32, b128_32, c128_32)
  GO2i(testz, a128_32, b128_32)
  GO2i(testc, a128_32, b128_32)
@@ -440,18 +543,18 @@ printf(N " %g, %g => %g\n", b, a, *(float*)&r);
  GO1(cvtepu16, 32, pmovzxwd);
  GO1(cvtepu16, 64, pmovzxwq);
  GO1(cvtepu32, 64, pmovzxdq);
- GO2(min, 32, pminsd, a128_32, b128_32)
- GO2(max, 32, pmaxsd, a128_32, b128_32)
- GO2C(blend, 16, pblendw, a128_16, b128_16, 0)
- GO2C(blend, 16, pblendw, a128_16, b128_16, 0xff)
- GO2C(blend, 16, pblendw, a128_16, b128_16, 0xaa)
- GO2C(blend, 16, pblendw, a128_16, b128_16, 2)
- GO2C(alignr, 8, palignr, a128_8, b128_8, 0)
- GO2C(alignr, 8, palignr, a128_8, b128_8, 2)
- GO2C(alignr, 8, palignr, a128_8, b128_8, 7)
- GO2C(alignr, 8, palignr, a128_8, b128_8, 15)
- GO2C(alignr, 8, palignr, a128_8, b128_8, 16)
- GO2C(alignr, 8, palignr, a128_8, b128_8, 0xff)
+ MULTIGO2i(min, 32, pminsd)
+ MULTIGO2i(max, 32, pmaxsd)
+ MULTIGO2Ci(blend, 16, pblendw, 0)
+ MULTIGO2Ci(blend, 16, pblendw, 0xff)
+ MULTIGO2Ci(blend, 16, pblendw, 0xaa)
+ MULTIGO2Ci(blend, 16, pblendw, 2)
+ MULTIGO2Ci(alignr, 8, palignr, 0)
+ MULTIGO2Ci(alignr, 8, palignr, 2)
+ MULTIGO2Ci(alignr, 8, palignr, 7)
+ MULTIGO2Ci(alignr, 8, palignr, 15)
+ MULTIGO2Ci(alignr, 8, palignr, 16)
+ MULTIGO2Ci(alignr, 8, palignr, 0xff)
  GO1ipd(movemask, movmskpd, a128_64)
  GO1pd(sqrt, psqrtpd, a128_pd)
  GO1pd(sqrt, psqrtpd, b128_pd)
@@ -467,100 +570,139 @@ printf(N " %g, %g => %g\n", b, a, *(float*)&r);
  MULITGO2pd(min, minpd)
  MULITGO2pd(div, divpd)
  MULITGO2pd(max, maxpd)
- GO2(unpacklo, 8, punpcklbw, a128_8, b128_8)
- GO2(unpacklo, 16, punpcklwd, a128_16, b128_16)
- GO2(unpacklo, 32, punpckldq, a128_32, b128_32)
- GO2(packs, 16, ppacksswb, a128_16, b128_16)
- GO2(cmpgt, 8, pcmpgtb, a128_8, b128_8)
- GO2(cmpgt, 16, pcmpgtw, a128_16, b128_16)
- GO2(cmpgt, 32, pcmpgtd, a128_32, b128_32)
- GO2(packus, 16, packuswb, a128_16, b128_16)
- GO2(unpackhi, 8, punpckhbw, a128_8, b128_8)
- GO2(unpackhi, 16, punpckhwd, a128_16, b128_16)
- GO2(unpackhi, 32, punpckhdq, a128_32, b128_32)
- GO2(packs, 32, ppackssdw, a128_32, b128_32)
- GO2(unpacklo, 64, punpcklqdq, a128_64, b128_64)
- GO2(unpackhi, 64, punpckhqdq, a128_64, b128_64)
- GO1C(shuffle, 32, pshufd, a128_32, 0)
- GO1C(shuffle, 32, pshufd, a128_32, 0xff)
- GO1C(shuffle, 32, pshufd, a128_32, 0xaa)
- GO1C(shuffle, 32, pshufd, a128_32, 2)
- GO1C(srli, 16, psrlw, a128_16, 0)
- GO1C(srli, 16, psrlw, a128_16, 0xff)
- GO1C(srli, 16, psrlw, a128_16, 0xaa)
- GO1C(srli, 16, psrlw, a128_16, 2)
- GO1C(srli, 32, psrld, a128_32, 0)
- GO1C(srli, 32, psrld, a128_32, 0xff)
- GO1C(srli, 32, psrld, a128_32, 0xaa)
- GO1C(srli, 32, psrld, a128_32, 2)
- GO1C(srli, 64, psrlq, a128_64, 0)
- GO1C(srli, 64, psrlq, a128_64, 0xff)
- GO1C(srli, 64, psrlq, a128_64, 0xaa)
- GO1C(srli, 64, psrlq, a128_64, 2)
- GO1C(srai, 16, psraw, a128_16, 0)
- GO1C(srai, 16, psraw, a128_16, 0xff)
- GO1C(srai, 16, psraw, a128_16, 0xaa)
- GO1C(srai, 16, psraw, a128_16, 2)
- GO1C(srai, 32, psrad, a128_32, 0)
- GO1C(srai, 32, psrad, a128_32, 0xff)
- GO1C(srai, 32, psrad, a128_32, 0xaa)
- GO1C(srai, 32, psrad, a128_32, 2)
- GO1C(slli, 16, psllw, a128_16, 0)
- GO1C(slli, 16, psllw, a128_16, 0xff)
- GO1C(slli, 16, psllw, a128_16, 0xaa)
- GO1C(slli, 16, psllw, a128_16, 2)
- GO1C(slli, 32, pslld, a128_32, 0)
- GO1C(slli, 32, pslld, a128_32, 0xff)
- GO1C(slli, 32, pslld, a128_32, 0xaa)
- GO1C(slli, 32, pslld, a128_32, 2)
- GO1C(slli, 64, psllq, a128_64, 0)
- GO1C(slli, 64, psllq, a128_64, 0xff)
- GO1C(slli, 64, psllq, a128_64, 0xaa)
- GO1C(slli, 64, psllq, a128_64, 2)
- GO2(cmpeq, 8, pcmpeqb, a128_8, b128_8)
- GO2(cmpeq, 16, pcmpeqw, a128_16, b128_16)
- GO2(cmpeq, 32, pcmpeqd, a128_32, b128_32)
+ MULITGO2pd(addsub, addsubpd)
+ MULITGO2Cpd(cmp, cmppd, 0)
+ MULITGO2Cpd(cmp, cmppd, 1)
+ MULITGO2Cpd(cmp, cmppd, 2)
+ MULITGO2Cpd(cmp, cmppd, 3)
+ MULITGO2Cpd(cmp, cmppd, 4)
+ MULITGO2Cpd(cmp, cmppd, 5)
+ MULITGO2Cpd(cmp, cmppd, 6)
+ MULITGO2Cpd(cmp, cmppd, 7)
+ MULITGO2Cpd(cmp, cmppd, 8)
+ MULITGO2Cpd(cmp, cmppd, 9)
+ MULITGO2Cpd(cmp, cmppd, 10)
+ MULITGO2Cpd(cmp, cmppd, 11)
+ MULITGO2Cpd(cmp, cmppd, 12)
+ MULITGO2Cpd(cmp, cmppd, 13)
+ MULITGO2Cpd(cmp, cmppd, 14)
+ MULITGO2Cpd(cmp, cmppd, 15)
+ MULITGO2Cpd(cmp, cmppd, 16)
+ MULITGO2Cpd(cmp, cmppd, 17)
+ MULITGO2Cpd(cmp, cmppd, 18)
+ MULITGO2Cpd(cmp, cmppd, 19)
+ MULITGO2Cpd(cmp, cmppd, 20)
+ MULITGO2Cpd(cmp, cmppd, 21)
+ MULITGO2Cpd(cmp, cmppd, 22)
+ MULITGO2Cpd(cmp, cmppd, 23)
+ MULITGO2Cpd(cmp, cmppd, 24)
+ MULITGO2Cpd(cmp, cmppd, 25)
+ MULITGO2Cpd(cmp, cmppd, 26)
+ MULITGO2Cpd(cmp, cmppd, 27)
+ MULITGO2Cpd(cmp, cmppd, 28)
+ MULITGO2Cpd(cmp, cmppd, 29)
+ MULITGO2Cpd(cmp, cmppd, 30)
+ MULITGO2Cpd(cmp, cmppd, 31)
+ MULITGO2Cpd(shuffle, shufpd, 0)
+ MULITGO2Cpd(shuffle, shufpd, 0x15)
+ MULITGO2Cpd(shuffle, shufpd, 0xff)
+ MULITGO2Cpd(shuffle, shufpd, 0x02)
+ MULTIGO2i(unpacklo, 8, punpcklbw)
+ MULTIGO2i(unpacklo, 16, punpcklwd)
+ MULTIGO2i(unpacklo, 32, punpckldq)
+ MULTIGO2i(packs, 16, ppacksswb)
+ MULTIGO2i(cmpgt, 8, pcmpgtb)
+ MULTIGO2i(cmpgt, 16, pcmpgtw)
+ MULTIGO2i(cmpgt, 32, pcmpgtd)
+ MULTIGO2i(packus, 16, packuswb)
+ MULTIGO2i(unpackhi, 8, punpckhbw)
+ MULTIGO2i(unpackhi, 16, punpckhwd)
+ MULTIGO2i(unpackhi, 32, punpckhdq)
+ MULTIGO2i(packs, 32, ppackssdw)
+ MULTIGO2i(unpacklo, 64, punpcklqdq)
+ MULTIGO2i(unpackhi, 64, punpckhqdq)
+ MULTIGO1Ci(shuffle, 32, pshufd, 0)
+ MULTIGO1Ci(shuffle, 32, pshufd, 0xff)
+ MULTIGO1Ci(shuffle, 32, pshufd, 0xaa)
+ MULTIGO1Ci(shuffle, 32, pshufd, 2)
+ MULTIGO1Ci(srli, 16, psrlw, 0)
+ MULTIGO1Ci(srli, 16, psrlw, 0xff)
+ MULTIGO1Ci(srli, 16, psrlw, 0xaa)
+ MULTIGO1Ci(srli, 16, psrlw, 2)
+ MULTIGO1Ci(srli, 32, psrld, 0)
+ MULTIGO1Ci(srli, 32, psrld, 0xff)
+ MULTIGO1Ci(srli, 32, psrld, 0xaa)
+ MULTIGO1Ci(srli, 32, psrld, 2)
+ MULTIGO1Ci(srli, 64, psrlq, 0)
+ MULTIGO1Ci(srli, 64, psrlq, 0xff)
+ MULTIGO1Ci(srli, 64, psrlq, 0xaa)
+ MULTIGO1Ci(srli, 64, psrlq, 2)
+ MULTIGO1Ci(srai, 16, psraw, 0)
+ MULTIGO1Ci(srai, 16, psraw, 0xff)
+ MULTIGO1Ci(srai, 16, psraw, 0xaa)
+ MULTIGO1Ci(srai, 16, psraw, 2)
+ MULTIGO1Ci(srai, 32, psrad, 0)
+ MULTIGO1Ci(srai, 32, psrad, 0xff)
+ MULTIGO1Ci(srai, 32, psrad, 0xaa)
+ MULTIGO1Ci(srai, 32, psrad, 2)
+ MULTIGO1Ci(slli, 16, psllw, 0)
+ MULTIGO1Ci(slli, 16, psllw, 0xff)
+ MULTIGO1Ci(slli, 16, psllw, 0xaa)
+ MULTIGO1Ci(slli, 16, psllw, 2)
+ MULTIGO1Ci(slli, 32, pslld, 0)
+ MULTIGO1Ci(slli, 32, pslld, 0xff)
+ MULTIGO1Ci(slli, 32, pslld, 0xaa)
+ MULTIGO1Ci(slli, 32, pslld, 2)
+ MULTIGO1Ci(slli, 64, psllq, 0)
+ MULTIGO1Ci(slli, 64, psllq, 0xff)
+ MULTIGO1Ci(slli, 64, psllq, 0xaa)
+ MULTIGO1Ci(slli, 64, psllq, 2)
+ MULTIGO2i(cmpeq, 8, pcmpeqb)
+ MULTIGO2i(cmpeq, 16, pcmpeqw)
+ MULTIGO2i(cmpeq, 32, pcmpeqd)
  MULITGO2pd(hadd, haddpd)
- GO2(srl, 16, psrlw, a128_16, b128_16)
- GO2(srl, 32, psrld, a128_32, b128_32)
- GO2(srl, 64, psrlq, a128_64, b128_64)
- GO2(add, 64, paddq, a128_64, b128_64)
- GO2(mullo, 16, pmullw, a128_16, b128_16)
- GO2u(subs, 8, psubusb, a128_8, b128_8)
- GO2u(subs, 16, psubusw, a128_16, b128_16)
- GO2u(min, 8, pminub, a128_8, b128_8)
- GO2f(and, pand, a128_8, b128_8)
- GO2u(adds, 8, paddusb, a128_8, b128_8)
- GO2u(adds, 16, paddusw, a128_16, b128_16)
- GO2u(max, 8, pmaxub, a128_8, b128_8)
- GO2f(andnot, pandn, a128_8, b128_8)
- GO2u(avg, 8, pavgb, a128_8, b128_8)
- GO2(sra, 16, psraw, a128_16, b128_16)
- GO2(sra, 32, psrad, a128_32, b128_32)
- GO2u(avg, 16, pavgb, a128_16, b128_16)
- GO2u(mulhi, 16, pmulhuw, a128_16, b128_16)
- GO2(mulhi, 16, pmulhw, a128_16, b128_16)
- GO2(subs, 8, psubsb, a128_8, b128_8)
- GO2(subs, 16, psubsw, a128_16, b128_16)
- GO2(min, 16, pminsw, a128_16, b128_16)
- GO2f(or, por, a128_8, b128_8)
- GO2(adds, 8, paddusb, a128_8, b128_8)
- GO2(adds, 16, paddusw, a128_16, b128_16)
- GO2(max, 16, pmaxsw, a128_16, b128_16)
- GO2f(xor, pxor, a128_8, b128_8)
- GO2(sll, 16, psllw, a128_16, b128_16)
- GO2(sll, 32, pslld, a128_32, b128_32)
- GO2(sll, 64, psllq, a128_64, b128_64)
- GO2u(mul, 32, pmuludq, a128_32, b128_32)
- GO2(madd, 16, pmaddwd, a128_16, b128_16)
- GO2u(sad, 8, psadbw, a128_8, b128_8)
- GO2(sub, 8, psubb, a128_8, b128_8)
- GO2(sub, 16, psubw, a128_16, b128_16)
- GO2(sub, 32, psubd, a128_32, b128_32)
- GO2(sub, 64, psubq, a128_64, b128_64)
- GO2(add, 8, paddb, a128_8, b128_8)
- GO2(add, 16, paddw, a128_16, b128_16)
- GO2(add, 32, paddd, a128_32, b128_32)
+ MULITGO2pd(hsub, hsubpd)
+ MULTIGO2i(srl, 16, psrlw)
+ MULTIGO2i(srl, 32, psrld)
+ MULTIGO2i(srl, 64, psrlq)
+ MULTIGO2i(add, 64, paddq)
+ MULTIGO2i(mullo, 16, pmullw)
+ MULTIGO2ui(subs, 8, psubusb)
+ MULTIGO2ui(subs, 16, psubusw)
+ MULTIGO2ui(min, 8, pminub)
+ MULTIGO2fi(and, pand)
+ MULTIGO2ui(adds, 8, paddusb)
+ MULTIGO2ui(adds, 16, paddusw)
+ MULTIGO2ui(max, 8, pmaxub)
+ MULTIGO2fi(andnot, pandn)
+ MULTIGO2ui(avg, 8, pavgb)
+ MULTIGO2i(sra, 16, psraw)
+ MULTIGO2i(sra, 32, psrad)
+ MULTIGO2ui(avg, 16, pavgb)
+ MULTIGO2ui(mulhi, 16, pmulhuw)
+ MULTIGO2i(mulhi, 16, pmulhw)
+ MULTIGO2i(subs, 8, psubsb)
+ MULTIGO2i(subs, 16, psubsw)
+ MULTIGO2i(min, 16, pminsw)
+ MULTIGO2fi(or, por)
+ MULTIGO2i(adds, 8, paddusb)
+ MULTIGO2i(adds, 16, paddusw)
+ MULTIGO2i(max, 16, pmaxsw)
+ MULTIGO2fi(xor, pxor)
+ MULTIGO2i(sll, 16, psllw)
+ MULTIGO2i(sll, 32, pslld)
+ MULTIGO2i(sll, 64, psllq)
+ MULTIGO2ui(mul, 32, pmuludq)
+ MULTIGO2i(madd, 16, pmaddwd)
+ MULTIGO2i(maddubs, 16, pmaddubsw)
+ MULTIGO2ui(sad, 8, psadbw)
+ MULTIGO2i(sub, 8, psubb)
+ MULTIGO2i(sub, 16, psubw)
+ MULTIGO2i(sub, 32, psubd)
+ MULTIGO2i(sub, 64, psubq)
+ MULTIGO2i(add, 8, paddb)
+ MULTIGO2i(add, 16, paddw)
+ MULTIGO2i(add, 32, paddd)
  GO2ps(movehl, pmovhlps, a128_ps, b128_ps)
  GO2ps(unpacklo, unpcklps, a128_ps, b128_ps)
  GO2ps(unpackhi, unpckhps, a128_ps, b128_ps)
@@ -587,6 +729,9 @@ printf(N " %g, %g => %g\n", b, a, *(float*)&r);
  MULITGO2ps(min, minps)
  MULITGO2ps(div, divps)
  MULITGO2ps(max, maxps)
+ MULITGO2ps(addsub, addsubps)
+ MULITGO2ps(hadd, haddps)
+ MULITGO2ps(hsub, hsubps)
  MULITGO2Cps(cmp, cmpps, 0)
  MULITGO2Cps(cmp, cmpps, 1)
  MULITGO2Cps(cmp, cmpps, 2)
@@ -631,11 +776,260 @@ printf(N " %g, %g => %g\n", b, a, *(float*)&r);
  MULTIGO2sd(div, divsd)
  MULTIGO2sd(max, maxsd)
  MULTIGO1ps2dq(cvtps, cvtps2dq)
- MULITGO2Cps(dp, dpps, 0xff)
- MULITGO2Cps(dp, dpps, 0x3f)
- MULITGO2Cps(dp, dpps, 0xf3)
- MULITGO2Cps(dp, dpps, 0x53)
+ // disabling NAN and INF for DPPS on purpose, it's not implemented
+ MULITGO2Cps_naninf(dp, dpps, 0xff)
+ MULITGO2Cps_naninf(dp, dpps, 0x3f)
+ MULITGO2Cps_naninf(dp, dpps, 0xf3)
+ MULITGO2Cps_naninf(dp, dpps, 0x53)
+// open this test must update test30 and ref30.txt
+//  ACCESS_TEST = 2;
+//  testVPMASKMOV();
+//  testVMASKMOVP();
+//  ACCESS_TEST = 1;
+//  testVPMASKMOV();
+//  testVMASKMOVP();
 
  return 0;
 }
 
+__m256i m256_setr_epi64x(long long a, long long b, long long c, long long d)
+{
+    union {
+        long long q[4];
+        int r[8];
+    } u;
+    u.q[0] = a; u.q[1] = b; u.q[2] = c; u.q[3] = d;
+    return _mm256_setr_epi32(u.r[0], u.r[1], u.r[2], u.r[3], u.r[4], u.r[5], u.r[6], u.r[7]);
+}
+
+__m128i m128_setr_epi64x(long long a, long long b)
+{
+    union {
+        long long q[2];
+        int r[4];
+    } u;
+    u.q[0] = a; u.q[1] = b;
+    return _mm_setr_epi32(u.r[0], u.r[1], u.r[2], u.r[3]);
+}
+
+int testVPMASKMOV() {
+    long pageSize = sysconf(_SC_PAGESIZE);
+
+    void *baseAddress = mmap(NULL, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (baseAddress == MAP_FAILED) {
+        printf("mmap failed\n");
+        return 1;
+    }
+    void *resultAddress = mmap(NULL, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (resultAddress == MAP_FAILED) {
+        printf("mmap failed\n");
+        return 1;
+    }
+
+    int *intData = (int *)((char *)baseAddress + pageSize - 4 * ACCESS_TEST * sizeof(int)); // 32 bytes for 8 integers
+    int *intResult = (int *)((char *)resultAddress + pageSize - 4 * ACCESS_TEST * sizeof(int)); // 32 bytes for 8 integers
+
+    for (int i = 0; i < 4 * ACCESS_TEST; i++) {
+        intData[i] = i + 1;
+    }
+
+    __m256i mask256_int = _mm256_setr_epi32(-1, -1, -1, -1, 1 - ACCESS_TEST, 0, 1 - ACCESS_TEST, 0); // 32-bit mask
+    __m128i mask128_int = _mm_setr_epi32(-1, -1, 1 - ACCESS_TEST, 0); // 32-bit mask
+    __m256i mask256_long = m256_setr_epi64x(-1, -1, 1 - ACCESS_TEST, 0); // 64-bit mask
+    __m128i mask128_long = m128_setr_epi64x(-1, 0); // 64-bit mask
+    // ************************************************************** _mm256_maskload_epi32
+    __m256i loaded_int256 = _mm256_maskload_epi32(intData, mask256_int);
+    printf("VPMASKMOV ");
+    for (int i = 0; i < 8; i++) {
+        printf("%d ", ((int*)&loaded_int256)[i]);
+    }
+    printf("\n");
+
+    memset(resultAddress, 0, pageSize);
+    _mm256_maskstore_epi32(intResult, mask256_int, loaded_int256);
+    printf("VPMASKMOV ");
+    for (int i = 0; i < 4 * ACCESS_TEST; i++) {
+        printf("%d ", intResult[i]);
+    }
+    printf("\n");
+
+    // ************************************************************** _mm_maskload_epi32
+    __m128i loaded_int128 = _mm_maskload_epi32(intData, mask128_int);
+    printf("VPMASKMOV ");
+    for (int i = 0; i < 4; i++) {
+        printf("%d ", ((int*)&loaded_int128)[i]);
+    }
+    printf("\n");
+
+    memset(resultAddress, 0, pageSize);
+    _mm_maskstore_epi32(intResult, mask128_int, loaded_int128);
+    printf("VPMASKMOV ");
+    for (int i = 0; i < 2 * ACCESS_TEST; i++) {
+        printf("%d ", intResult[i]);
+    }
+    printf("\n");
+
+    long long *longData = (long long *)((char *)baseAddress + pageSize - 2 * ACCESS_TEST * sizeof(long long)); // 32 bytes for 4 long integers
+    long long *longResult = (long long *)((char *)resultAddress + pageSize - 2 * ACCESS_TEST * sizeof(long long)); // 32 bytes for 8 integers
+    for (int i = 0; i < 2 * ACCESS_TEST; i++) {
+        longData[i] = i + 1;
+    }
+
+    // ************************************************************** _mm256_maskload_epi64
+    __m256i loaded_long256 = _mm256_maskload_epi64(longData, mask256_long);
+    printf("VPMASKMOV ");
+    for (int i = 0; i < 4; i++) {
+        printf("%lld ", ((long long*)&loaded_long256)[i]);
+    }
+    printf("\n");
+
+    memset(resultAddress, 0, pageSize);
+    _mm256_maskstore_epi64(longResult, mask256_long, loaded_long256);
+    printf("VPMASKMOV ");
+    for (int i = 0; i < 2 * ACCESS_TEST; i++) {
+        printf("%lld ", longResult[i]);
+    }
+    printf("\n");
+
+    // ************************************************************** _mm_maskload_epi64
+    __m128i loaded_long128 = _mm_maskload_epi64(longData, mask128_long);
+    printf("VPMASKMOV ");
+    for (int i = 0; i < 2; i++) {
+        printf("%lld ", ((long long*)&loaded_long128)[i]);
+    }
+    printf("\n");
+
+    //  _mm_maskstore_epi64
+    memset(resultAddress, 0, pageSize);
+    _mm_maskstore_epi64(longResult, mask128_long, loaded_long128);
+    printf("VPMASKMOV ");
+    for (int i = 0; i < 1 * ACCESS_TEST; i++) {
+        printf("%lld ", longResult[i]);
+    }
+    printf("\n");
+
+    munmap(baseAddress, pageSize);
+    munmap(resultAddress, pageSize);
+
+    return 0;
+}
+
+int testVMASKMOVP() {
+    long pageSize = sysconf(_SC_PAGESIZE);
+
+    void *baseAddress = mmap(NULL, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (baseAddress == MAP_FAILED) {
+        perror("mmap failed");
+        return 1;
+    }
+    void *destAddress = mmap(NULL, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (destAddress == MAP_FAILED) {
+        perror("mmap failed");
+        return 1;
+    }
+
+    float *floatData = (float *)((char *)baseAddress + pageSize - 16 * ACCESS_TEST); // 16 bytes for 4 floats
+    float *floatDest = (float *)((char *)destAddress + pageSize - 16 * ACCESS_TEST); // 16 bytes for 4 floats
+
+    int mask_data[8] = { -1, 0, -1, -1, 0, 1 - ACCESS_TEST, 0, 0 };  // -1 的二进制表示是 0xFFFFFFFF（最高位为 1）
+    __m256i mask256ps = _mm256_loadu_si256((__m256i const *)mask_data);
+    __m256i mask256pd = _mm256_setr_epi64x(-1, -1, 0, 1 - ACCESS_TEST);
+    __m128i mask128 = _mm_setr_epi32(-1, -1, 0, 1 - ACCESS_TEST);
+
+    //=================================================================================
+    //  _mm256_maskload_ps
+    for (int i = 0; i < 4 * ACCESS_TEST; i++) {
+        floatData[i] = (float)(i + 1);
+    }
+
+    __m256 floatVec = _mm256_maskload_ps(floatData, mask256ps);
+    printf("VMASKMOVP ");
+    for (int i = 0; i < 8; i++) {
+        printf("%f ", ((float*)&floatVec)[i]);
+    }
+    printf("\n");
+
+    //  _mm256_maskstore_ps
+    memset(destAddress, 0, pageSize);
+    _mm256_maskstore_ps(floatDest, mask256ps, floatVec);
+    printf("VMASKMOVP ");
+    for (int i = 0; i < 4 * ACCESS_TEST; i++) {
+        printf("%f ", floatDest[i]);
+    }
+    printf("\n");
+
+    //=================================================================================
+    for (int i = 0; i < 4 * ACCESS_TEST; i++) {
+        floatData[i] = (float)(i + 10);
+    }
+
+    //  _mm_maskload_ps
+    __m128 floatVec128 = _mm_maskload_ps(floatData, mask128);
+    printf("VMASKMOVP ");
+    for (int i = 0; i < 4; i++) {
+        printf("%f ", ((float*)&floatVec128)[i]);
+    }
+    printf("\n");
+
+    //  _mm_maskstore_ps
+    memset(destAddress, 0, pageSize);
+    _mm_maskstore_ps(floatDest, mask128, floatVec128);
+    printf("VMASKMOVP ");
+    for (int i = 0; i < 2 * ACCESS_TEST; i++) {
+        printf("%f ", floatDest[i]);
+    }
+    printf("\n");
+
+    //=================================================================================
+    double *doubleData = (double *)((char *)baseAddress + pageSize - 16 * ACCESS_TEST); // 16 bytes for 2 doubles
+    double *doubleDest = (double *)((char *)destAddress + pageSize - 16 * ACCESS_TEST); // 16 bytes for 2 doubles
+    for (int i = 0; i < 2 * ACCESS_TEST; i++) {
+        doubleData[i] = (double)(i + 20);
+    }
+
+    //  _mm256_maskload_pd
+    __m256d doubleVec = _mm256_maskload_pd(doubleData, mask256pd);
+    printf("VMASKMOVP ");
+    for (int i = 0; i < 4; i++) {
+        printf("%lf ", ((double *)&doubleVec)[i]);
+    }
+    printf("\n");
+
+    //  _mm256_maskstore_pd
+    memset(destAddress, 0, pageSize);
+    _mm256_maskstore_pd(doubleDest, mask256pd, doubleVec);
+    printf("VMASKMOVP ");
+    for (int i = 0; i < 2 * ACCESS_TEST; i++) {
+        printf("%f ", doubleDest[i]);
+    }
+    printf("\n");
+
+    //=================================================================================
+    for (int i = 0; i < 2 * ACCESS_TEST; i++) {
+        doubleData[i] = (double)(i + 30);
+    }
+
+    //  _mm_maskload_pd
+    __m128d doubleVec128 = _mm_maskload_pd(doubleData, mask128);
+    printf("VMASKMOVP ");
+    for (int i = 0; i < 2; i++) {
+        printf("%lf ", ((double *)&doubleVec128)[i]);
+    }
+    printf("\n");
+
+    //  _mm_maskstore_pd
+    memset(destAddress, 0, pageSize);
+    _mm_maskstore_pd(doubleDest, mask128, doubleVec128);
+    printf("VMASKMOVP ");
+    for (int i = 0; i < 1 * ACCESS_TEST; i++) {
+        printf("%f ", doubleDest[i]);
+    }
+    printf("\n");
+
+    //=================================================================================
+
+    munmap(baseAddress, pageSize);
+    munmap(destAddress, pageSize);
+
+    return 0;
+}

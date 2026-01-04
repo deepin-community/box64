@@ -17,11 +17,8 @@
 #include "box64context.h"
 #include "emu/x64emu_private.h"
 
-#ifdef ANDROID
-    const char* libxtstName = "libXtst.so";
-#else
-    const char* libxtstName = "libXtst.so.6";
-#endif
+const char* libxtstName = "libXtst.so.6";
+#define ALTNAME "libXtst.so"
 
 #define LIBNAME libxtst
 
@@ -71,10 +68,6 @@ EXPORT int my_XRecordEnableContext(x64emu_t* emu, void* display, void* context, 
     return my->XRecordEnableContext(display, context, find_XRecordInterceptProc_Fct(cb), closure);
 }
 
-#ifdef ANDROID
-#define NEEDED_LIBS "libX11.so", "libXext.so"
-#else
 #define NEEDED_LIBS "libX11.so.6", "libXext.so.6"
-#endif
 
 #include "wrappedlib_init.h"

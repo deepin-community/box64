@@ -18,6 +18,7 @@
 #include "gltools.h"
 
 const char* libglName = "libGL.so.1";
+#define ALTNAME "libGL.so"
 #define LIBNAME libgl
 static library_t* my_lib = NULL;
 
@@ -410,7 +411,14 @@ static void* find_glGetVkProcAddrNV_Fct(void* fct)
 }
 #undef SUPER
 
-#define PRE_INIT if(box64_libGL) {lib->w.lib = dlopen(box64_libGL, RTLD_LAZY | RTLD_GLOBAL); lib->path = strdup(box64_libGL);} else
+#define PRE_INIT                                                                \
+    if(BOX64ENV(libgl)) {                                                           \
+        lib->w.lib = dlopen(BOX64ENV(libgl), RTLD_LAZY | RTLD_GLOBAL);              \
+        lib->path = strdup(BOX64ENV(libgl));                                        \
+    } else if(strstr(lib->name, "libGLX_nvidia.so.0")) {                        \
+        lib->w.lib = dlopen("libGLX_nvidia.so.0", RTLD_LAZY | RTLD_GLOBAL);     \
+        if(lib->w.lib) lib->path = strdup("libGLX_nvidia.so.0");                \
+    }
 #define CUSTOM_INIT \
     my_lib = lib;                                                               \
     lib->w.priv = dlsym(lib->w.lib, "glXGetProcAddress");                       \
@@ -420,6 +428,27 @@ static void* find_glGetVkProcAddrNV_Fct(void* fct)
         symbol1_t *s = &kh_value(lib->w.mysymbolmap, k);                        \
         s->resolved = 1;                                                        \
         s->addr = AddBridge(lib->w.bridge, s->w, find_glDebugMessageCallback_Fct(symb), 0, "glDebugMessageCallback"); \
+    }                                                                           \
+    symb = dlsym(lib->w.lib, "glDebugMessageCallbackARB");                      \
+    if(symb) {                                                                  \
+        k = kh_get(symbolmap, lib->w.mysymbolmap, "glDebugMessageCallbackARB"); \
+        symbol1_t *s = &kh_value(lib->w.mysymbolmap, k);                        \
+        s->resolved = 1;                                                        \
+        s->addr = AddBridge(lib->w.bridge, s->w, find_glDebugMessageCallbackARB_Fct(symb), 0, "glDebugMessageCallbackARB"); \
+    }                                                                           \
+    symb = dlsym(lib->w.lib, "glDebugMessageCallbackAMD");                      \
+    if(symb) {                                                                  \
+        k = kh_get(symbolmap, lib->w.mysymbolmap, "glDebugMessageCallbackAMD"); \
+        symbol1_t *s = &kh_value(lib->w.mysymbolmap, k);                        \
+        s->resolved = 1;                                                        \
+        s->addr = AddBridge(lib->w.bridge, s->w, find_glDebugMessageCallbackAMD_Fct(symb), 0, "glDebugMessageCallbackAMD"); \
+    }                                                                           \
+    symb = dlsym(lib->w.lib, "glDebugMessageCallbackKHR");                      \
+    if(symb) {                                                                  \
+        k = kh_get(symbolmap, lib->w.mysymbolmap, "glDebugMessageCallbackKHR"); \
+        symbol1_t *s = &kh_value(lib->w.mysymbolmap, k);                        \
+        s->resolved = 1;                                                        \
+        s->addr = AddBridge(lib->w.bridge, s->w, find_glDebugMessageCallbackKHR_Fct(symb), 0, "glDebugMessageCallbackKHR"); \
     }                                                                           \
     symb = dlsym(lib->w.lib, "glXSwapIntervalMESA");                            \
     if(symb) {                                                                  \
@@ -434,6 +463,13 @@ static void* find_glGetVkProcAddrNV_Fct(void* fct)
         symbol1_t *s = &kh_value(lib->w.mysymbolmap, k);                        \
         s->resolved = 1;                                                        \
         s->addr = AddBridge(lib->w.bridge, s->w, find_glXSwapIntervalEXT_Fct(symb), 0, "glXSwapIntervalEXT"); \
+    }                                                                           \
+    symb = dlsym(lib->w.lib, "glGetVkProcAddrNV");                              \
+    if(symb) {                                                                  \
+        k = kh_get(symbolmap, lib->w.mysymbolmap, "glGetVkProcAddrNV");         \
+        symbol1_t *s = &kh_value(lib->w.mysymbolmap, k);                        \
+        s->resolved = 1;                                                        \
+        s->addr = AddBridge(lib->w.bridge, s->w, find_glGetVkProcAddrNV_Fct(symb), 0, "glGetVkProcAddrNV"); \
     }                                                                           \
 
 #include "wrappedlib_init.h"
@@ -537,13 +573,13 @@ void* getGLProcAddress(x64emu_t* emu, glprocaddress_t procaddr, const char* rnam
     } else
         symbol = procaddr(rname);
     if(!symbol) {
-        printf_dlsym(LOG_DEBUG, "%p\n", NULL);
+        printf_dlsym_prefix(0, LOG_DEBUG, "%p\n", NULL);
         return NULL;    // easy
     }
     // check if alread bridged
     uintptr_t ret = CheckBridged(emu->context->system, symbol);
     if(ret) {
-        printf_dlsym(LOG_DEBUG, "%p\n", (void*)ret);
+        printf_dlsym_prefix(0, LOG_DEBUG, "%p\n", (void*)ret);
         return (void*)ret; // already bridged
     }
     // get wrapper
@@ -563,8 +599,8 @@ void* getGLProcAddress(x64emu_t* emu, glprocaddress_t procaddr, const char* rnam
         k = kh_get(symbolmap, wrappers->glwrappers, tmp);
     }
     if(k==kh_end(wrappers->glwrappers)) {
-        printf_dlsym(LOG_DEBUG, "%p\n", NULL);
-        printf_dlsym(LOG_INFO, "Warning, no wrapper for %s\n", rname);
+        printf_dlsym_prefix(0, LOG_DEBUG, "%p\n", NULL);
+        printf_dlsym_prefix(2, LOG_INFO, "Warning, no wrapper for %s\n", rname);
         return NULL;
     }
     symbol1_t* s = &kh_value(wrappers->glwrappers, k);
@@ -575,6 +611,6 @@ void* getGLProcAddress(x64emu_t* emu, glprocaddress_t procaddr, const char* rnam
         s->resolved = 1;
     }
     ret = s->addr;
-    printf_dlsym(LOG_DEBUG, "%p\n", (void*)ret);
+    printf_dlsym_prefix(0, LOG_DEBUG, "%p\n", (void*)ret);
     return (void*)ret;
 }

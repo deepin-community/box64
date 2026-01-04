@@ -5,10 +5,8 @@
 
 #include "debug.h"
 #include "box64context.h"
-#include "dynarec.h"
+#include "box64cpu.h"
 #include "emu/x64emu_private.h"
-#include "emu/x64run_private.h"
-#include "x64run.h"
 #include "x64emu.h"
 #include "box64stack.h"
 #include "callback.h"
@@ -18,7 +16,7 @@
 
 #include "arm64_printer.h"
 #include "dynarec_arm64_private.h"
-#include "dynarec_arm64_helper.h"
+#include "../dynarec_helper.h"
 #include "dynarec_arm64_functions.h"
 
 #define GETGm   gd = ((nextop&0x38)>>3)
@@ -61,12 +59,36 @@ uintptr_t dynarec64_67_32(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int 
 
     switch(opcode) {
         
+        case 0x0F:
+            opcode=F8;
+            switch(opcode) {
+
+                case 0x29:
+                    INST_NAME("MOVAPS Ex,Gx");
+                    nextop = F8;
+                    GETG;
+                    v0 = sse_get_reg(dyn, ninst, x1, gd, 0);
+                    if(MODREG) {
+                        ed = (nextop&7)+(rex.b<<3);
+                        v1 = sse_get_reg_empty(dyn, ninst, x1, ed);
+                        VMOVQ(v1, v0);
+                    } else {
+                        addr = geted16(dyn, addr, ninst, nextop, &ed, x1, &fixedaddress, &unscaled, 0xfff<<4, 15, 0);
+                        VST128(v0, ed, fixedaddress);
+                        SMWRITE2();
+                    }
+                    break;
+
+                default:
+                    DEFAULT;
+            }
+            break;
+
         case 64:
             addr = dynarec64_6764_32(dyn, addr, ip, ninst, rex, rep, _FS, ok, need_epilog);
             break;
 
         #define GO(NO, YES)                                             \
-            BARRIER(BARRIER_MAYBE);                                     \
             JUMP(addr+i8, 1);                                           \
             if(dyn->insts[ninst].x64.jmp_insts==-1 ||                   \
                 CHECK_CACHE()) {                                        \
@@ -78,40 +100,45 @@ uintptr_t dynarec64_67_32(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int 
                         fpu_purgecache(dyn, ninst, 1, x1, x2, x3);      \
                     jump_to_next(dyn, addr+i8, 0, ninst, rex.is32bits); \
                 } else {                                                \
-                    CacheTransform(dyn, ninst, cacheupd, x1, x2, x3);   \
+                    CacheTransform(dyn, ninst, cacheupd);               \
                     i32 = dyn->insts[dyn->insts[ninst].x64.jmp_insts].address-(dyn->native_size);\
+                    SKIP_SEVL(i32);                                     \
                     B(i32);                                             \
                 }                                                       \
-            } else {    \
-                /* inside the block */  \
+            } else {                                                    \
+                /* inside the block */                                  \
                 i32 = dyn->insts[dyn->insts[ninst].x64.jmp_insts].address-(dyn->native_size);    \
-                Bcond(YES, i32);    \
+                SKIP_SEVL(i32);                                         \
+                Bcond(YES, i32);                                        \
             }
         case 0xE0:
             INST_NAME("LOOPNZ (16bits)");
             READFLAGS(X_ZF);
             i8 = F8S;
+            SMEND();
             UXTHw(x1, xRCX);
-            SUBSw_U12(x1, x1, 1);
+            SUBw_U12(x1, x1, 1);
             BFIx(xRCX, x1, 0, 16);
-            B_NEXT(cEQ);    // ECX is 0, no LOOP
+            CBZw_NEXT(x1);    // ECX is 0, no LOOP
             TSTw_mask(xFlags, 0b011010, 0); //mask=0x40
             GO(cNE, cEQ);
             break;
         case 0xE1:
             INST_NAME("LOOPZ (16bits)");
             READFLAGS(X_ZF);
+            SMEND();
             i8 = F8S;
             UXTHw(x1, xRCX);
-            SUBSw_U12(x1, x1, 1);
+            SUBw_U12(x1, x1, 1);
             BFIx(xRCX, x1, 0, 16);
-            B_NEXT(cEQ);    // ECX is 0, no LOOP
+            CBZw_NEXT(x1);    // ECX is 0, no LOOP
             TSTw_mask(xFlags, 0b011010, 0); //mask=0x40
             GO(cEQ, cNE);
             break;
         case 0xE2:
             INST_NAME("LOOP (16bits)");
             i8 = F8S;
+            SMEND();
             UXTHw(x1, xRCX);
             SUBSw_U12(x1, x1, 1);
             BFIx(xRCX, x1, 0, 16);
@@ -120,6 +147,7 @@ uintptr_t dynarec64_67_32(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int 
         case 0xE3:
             INST_NAME("JCXZ");
             i8 = F8S;
+            SMEND();
             TSTw_mask(xRCX, 0, 15); //mask=0xffff
             GO(cNE, cEQ);
             break;

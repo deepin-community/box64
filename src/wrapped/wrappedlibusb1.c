@@ -18,11 +18,8 @@
 #include "emu/x64emu_private.h"
 #include "myalign.h"
 
-#ifdef ANDROID
-    const char* libusb1Name = "libusb-1.0.so";
-#else
-    const char* libusb1Name = "libusb-1.0.so.0";
-#endif
+const char* libusb1Name = "libusb-1.0.so.0";
+#define ALTNAME "libusb-1.0.so"
 
 #define LIBNAME libusb1
 
@@ -150,6 +147,12 @@ EXPORT int my_libusb_cancel_transfer(x64emu_t* emu, my_libusb_transfer_t* t)
 {
     t->callback = findtransfertFct(t->callback);
     return my->libusb_cancel_transfer(t);
+}
+
+EXPORT void my_libusb_free_transfer(x64emu_t* emu, my_libusb_transfer_t* t)
+{
+    t->callback = findtransfertFct(t->callback);
+    my->libusb_free_transfer(t);
 }
 
 #include "wrappedlib_init.h"

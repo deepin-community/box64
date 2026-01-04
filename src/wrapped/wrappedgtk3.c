@@ -19,11 +19,8 @@
 #include "myalign.h"
 #include "gtkclass.h"
 
-#ifdef ANDROID
-    const char* gtk3Name = "libgtk-3.so";
-#else
-    const char* gtk3Name = "libgtk-3.so.0";
-#endif
+const char* gtk3Name = "libgtk-3.so.0";
+#define ALTNAME "libgtk-3.so"
 
 #define LIBNAME gtk3
 
@@ -94,14 +91,6 @@ GO(gtk_list_store_insert_with_valuesv, vFppippi_t)
 
 
 #include "wrappercallback.h"
-
-EXPORT uintptr_t my3_gtk_signal_connect_full(x64emu_t* emu, void* object, void* name, void* c_handler, void* unsupported, void* data, void* closure, uint32_t signal, int after)
-{
-    my_signal_t *sig = new_mysignal(c_handler, data, closure);
-    uintptr_t ret = my->gtk_signal_connect_full(object, name, my_signal_cb, NULL, sig, my_signal_delete, signal, after);
-    printf_log(LOG_DEBUG, "Connecting gtk signal \"%s\" with cb=%p\n", (char*)name, sig);
-    return ret;
-}
 
 #define SUPER() \
 GO(0)   \
@@ -500,6 +489,51 @@ static void* find_GtkFileFilterFunc_Fct(void* fct)
     return NULL;
 }
 
+// GtkListBoxUpdateHeaderFunc
+#define GO(A)   \
+static uintptr_t my_GtkListBoxUpdateHeaderFunc_fct_##A = 0;                 \
+static void my_GtkListBoxUpdateHeaderFunc_##A(void* a, void* b, void* c)    \
+{                                                                           \
+    RunFunctionFmt(my_GtkListBoxUpdateHeaderFunc_fct_##A, "ppp", a, b, c);  \
+}
+SUPER()
+#undef GO
+static void* findGtkListBoxUpdateHeaderFunc(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_GtkListBoxUpdateHeaderFunc_fct_##A == (uintptr_t)fct) return my_GtkListBoxUpdateHeaderFunc_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_GtkListBoxUpdateHeaderFunc_fct_##A == 0) {my_GtkListBoxUpdateHeaderFunc_fct_##A = (uintptr_t)fct; return my_GtkListBoxUpdateHeaderFunc_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for gtk-3 GtkListBoxUpdateHeaderFunc callback\n");
+    return NULL;
+}
+// TranslateEvent
+#define GO(A)   \
+static uintptr_t my_TranslateEvent_fct_##A = 0;             \
+static void my_TranslateEvent_##A(void* a, void* b)         \
+{                                                           \
+    RunFunctionFmt(my_TranslateEvent_fct_##A, "pp", a, b);  \
+}
+SUPER()
+#undef GO
+static void* findTranslateEvent(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_TranslateEvent_fct_##A == (uintptr_t)fct) return my_TranslateEvent_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_TranslateEvent_fct_##A == 0) {my_TranslateEvent_fct_##A = (uintptr_t)fct; return my_TranslateEvent_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for gtk-3 TranslateEvent callback\n");
+    return NULL;
+}
+
 #undef SUPER
 
 EXPORT void my3_gtk_dialog_add_buttons(x64emu_t* emu, void* dialog, void* first, uintptr_t* b)
@@ -534,12 +568,6 @@ EXPORT void my3_gtk_message_dialog_format_secondary_markup(x64emu_t* emu, void* 
     // pre-bake the fmt/vaarg, because there is no "va_list" version of this function
     my->gtk_message_dialog_format_secondary_markup(dialog, buf);
     free(buf);
-}
-
-EXPORT void* my3_gtk_type_class(x64emu_t* emu, size_t type)
-{
-    void* class = my->gtk_type_class(type);
-    return wrapCopyGTKClass(class, type);
 }
 
 EXPORT void my3_gtk_file_filter_add_custom(x64emu_t* emu, void* filter, uint32_t needed, void* f, void* data, void* d)
@@ -581,11 +609,6 @@ EXPORT void my3_gtk_menu_popup(x64emu_t* emu, void* menu, void* shell, void* ite
     my->gtk_menu_popup(menu, shell, item, findMenuPositionFct(f), data, button, time_);
 }
 
-EXPORT uint32_t my3_gtk_timeout_add(x64emu_t* emu, uint32_t interval, void* f, void* data)
-{
-    return my->gtk_timeout_add(interval, findGtkFunctionFct(f), data);
-}
-
 EXPORT int my3_gtk_clipboard_set_with_data(x64emu_t* emu, void* clipboard, void* target, uint32_t n, void* f_get, void* f_clear, void* data)
 {
     return my->gtk_clipboard_set_with_data(clipboard, target, n, findClipboadGetFct(f_get), findClipboadClearFct(f_clear), data);
@@ -596,15 +619,9 @@ EXPORT int my3_gtk_clipboard_set_with_owner(x64emu_t* emu, void* clipboard, void
     return my->gtk_clipboard_set_with_owner(clipboard, target, n, findClipboadGetFct(f_get), findClipboadClearFct(f_clear), data);
 }
 
-static void* my_translate_func(void* path, my_signal_t* sig)
-{
-    return (void*)RunFunctionFmt(sig->c_handler, "pp", path, sig->data)       ;
-}
-
 EXPORT void my3_gtk_stock_set_translate_func(x64emu_t* emu, void* domain, void* f, void* data, void* notify)
 {
-    my_signal_t *sig = new_mysignal(f, data, notify);
-    my->gtk_stock_set_translate_func(domain, my_translate_func, sig, my_signal_delete);
+    my->gtk_stock_set_translate_func(domain, findTranslateEvent(f), data, findGDestroyNotifyFct(notify));
 }
 
 EXPORT void my3_gtk_container_forall(x64emu_t* emu, void* container, void* f, void* data)
@@ -627,41 +644,6 @@ EXPORT int my3_gtk_text_iter_forward_find_char(x64emu_t* emu, void* iter, void* 
     return my->gtk_text_iter_forward_find_char(iter, findGtkTextCharPredicateFct(f), data, limit);
 }
 
-EXPORT void* my3_gtk_toolbar_append_item(x64emu_t* emu, void* toolbar, void* text, void* tooltip_text, void* tooltip_private, void* icon, void* f, void* data)
-{
-    return my->gtk_toolbar_append_item(toolbar, text, tooltip_text, tooltip_private, icon, findToolbarFct(f), data);
-}
-
-EXPORT void* my3_gtk_toolbar_prepend_item(x64emu_t* emu, void* toolbar, void* text, void* tooltip_text, void* tooltip_private, void* icon, void* f, void* data)
-{
-    return my->gtk_toolbar_prepend_item(toolbar, text, tooltip_text, tooltip_private, icon, findToolbarFct(f), data);
-}
-
-EXPORT void* my3_gtk_toolbar_insert_item(x64emu_t* emu, void* toolbar, void* text, void* tooltip_text, void* tooltip_private, void* icon, void* f, void* data, int position)
-{
-    return my->gtk_toolbar_insert_item(toolbar, text, tooltip_text, tooltip_private, icon, findToolbarFct(f), data, position);
-}
-
-EXPORT void* my3_gtk_toolbar_append_element(x64emu_t* emu, void* toolbar, size_t type, void* widget, void* text, void* tooltip_text, void* tooltip_private, void* icon, void* f, void* data)
-{
-    return my->gtk_toolbar_append_element(toolbar, type, widget, text, tooltip_text, tooltip_private, icon, findToolbarFct(f), data);
-}
-
-EXPORT void* my3_gtk_toolbar_prepend_element(x64emu_t* emu, void* toolbar, size_t type, void* widget, void* text, void* tooltip_text, void* tooltip_private, void* icon, void* f, void* data)
-{
-    return my->gtk_toolbar_prepend_element(toolbar, type, widget, text, tooltip_text, tooltip_private, icon, findToolbarFct(f), data);
-}
-
-EXPORT void* my3_gtk_toolbar_insert_element(x64emu_t* emu, void* toolbar, size_t type, void* widget, void* text, void* tooltip_text, void* tooltip_private, void* icon, void* f, void* data, int position)
-{
-    return my->gtk_toolbar_insert_element(toolbar, type, widget, text, tooltip_text, tooltip_private, icon, findToolbarFct(f), data, position);
-}
-
-EXPORT void* my3_gtk_toolbar_insert_stock(x64emu_t* emu, void* toolbar, void* stock_id, void* tooltip_text, void* tooltip_private, void* f, void* data, int position)
-{
-    return my->gtk_toolbar_insert_stock(toolbar, stock_id, tooltip_text, tooltip_private, findToolbarFct(f), data, position);
-}
-
 EXPORT void my3_gtk_tree_sortable_set_sort_func(x64emu_t* emu, void* sortable, int id, void* f, void* data, void* notify)
 {
     my->gtk_tree_sortable_set_sort_func(sortable, id, findGtkTreeIterCompareFuncFct(f), data, findGDestroyNotifyFct(notify));
@@ -670,21 +652,6 @@ EXPORT void my3_gtk_tree_sortable_set_sort_func(x64emu_t* emu, void* sortable, i
 EXPORT void my3_gtk_tree_sortable_set_default_sort_func(x64emu_t* emu, void* sortable, void* f, void* data, void* notify)
 {
     my->gtk_tree_sortable_set_default_sort_func(sortable, findGtkTreeIterCompareFuncFct(f), data, findGDestroyNotifyFct(notify));
-}
-
-EXPORT int my3_gtk_type_unique(x64emu_t* emu, size_t parent, my_GtkTypeInfo_t* gtkinfo)
-{
-    return my->gtk_type_unique(parent, findFreeGtkTypeInfo(gtkinfo, parent));
-}
-
-EXPORT unsigned long my3_gtk_signal_connect(x64emu_t* emu, void* object, void* name, void* func, void* data)
-{
-    return my3_gtk_signal_connect_full(emu, object, name, func, NULL, data, NULL, 0, 0);
-}
-
-EXPORT void my3_gtk_object_set_data_full(x64emu_t* emu, void* object, void* key, void* data, void* notify)
-{
-    my->gtk_object_set_data_full(object, key, data, findGDestroyNotifyFct(notify));
 }
 
 EXPORT float my3_gtk_spin_button_get_value_as_float(x64emu_t* emu, void* spinner)
@@ -753,7 +720,7 @@ EXPORT void* my3_gtk_tree_store_new(x64emu_t* emu, uint32_t n, uintptr_t* b)
     return my->gtk_tree_store_newv(n, c);
 }
 
-EXPORT void my3_gtk_style_context_get_valist(x64emu_t* emu, void* context, int state, x64_va_list_t V)
+EXPORT void my3_gtk_style_context_get_valist(x64emu_t* emu, void* context, uint32_t state, x64_va_list_t V)
 {
     #ifdef CONVERT_VALIST
     CONVERT_VALIST(V);
@@ -772,6 +739,13 @@ EXPORT void my3_gtk_style_context_get_style_valist(x64emu_t* emu, void* context,
     #endif
     my->gtk_style_context_get_style_valist(context, VARARGS);
 }
+
+EXPORT void my3_gtk_style_context_get_style(x64emu_t* emu, void* context, uintptr_t* b)
+{
+    CREATE_VALIST_FROM_VAARG(b, emu->scratch, 1);
+    my->gtk_style_context_get_style_valist(context, VARARGS);
+}
+
 
 EXPORT void my3_gtk_enumerate_printers(x64emu_t* emu, void* f, void* data, void* d, int i)
 {
@@ -844,9 +818,14 @@ EXPORT void my3_gtk_tree_store_set(x64emu_t* emu, void* tree, void* iter, uintpt
     my->gtk_tree_store_set_valist(tree, iter, VARARGS);
 }
 
+EXPORT void my3_gtk_list_box_set_header_func(x64emu_t* emu, void* box, void* f, void* data, void* d)
+{
+    my->gtk_list_box_set_header_func(box, findGtkListBoxUpdateHeaderFunc(f), data, findGDestroyNotifyFct(d));
+}
+
 
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #define ALTMY my3_
@@ -874,10 +853,6 @@ EXPORT void my3_gtk_tree_store_set(x64emu_t* emu, void* tree, void* iter, uintpt
     SetGtkGestureLongPressID(my->gtk_gesture_long_press_get_type());\
     SetGtkActionID(my->gtk_action_get_type());
 
-#ifdef ANDROID
-#define NEEDED_LIBS "libgdk-3.so", "libpangocairo-1.0.so", "libgio-2.0.so"
-#else
-#define NEEDED_LIBS "libgdk-3.so.0", "libpangocairo-1.0.so.0", "libgio-2.0.so.0"
-#endif
+#define NEEDED_LIBS "libgdk-3.so.0", "libpangocairo-1.0.so.0", "libgio-2.0.so.0", "libcairo.so.2"
 
 #include "wrappedlib_init.h"

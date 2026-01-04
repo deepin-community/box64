@@ -2,9 +2,13 @@
 #define __X86EMU_PRIVATE_H_
 
 #include "regs.h"
+#include "os.h"
 
 typedef struct box64context_s box64context_t;
 typedef struct x64_ucontext_s x64_ucontext_t;
+#ifdef BOX32
+typedef struct i386_ucontext_s i386_ucontext_t;
+#endif
 
 #define ERR_UNIMPL  1
 #define ERR_DIVBY0  2
@@ -37,7 +41,6 @@ typedef struct x64test_s {
     int         memsize;
     int         test;
     int         clean;
-    int         notest;
     uint8_t     mem[32];
 } x64test_t;
 
@@ -49,12 +52,7 @@ typedef struct emu_flags_s {
     uint32_t    jmpbuf_ready:1;   // the jmpbuf in the emu is ok and don't need refresh
 } emu_flags_t;
 
-#ifdef ANDROID
-#include <setjmp.h>
-#define JUMPBUFF sigjmp_buf
-#else
-#define JUMPBUFF struct __jmp_buf_tag
-#endif
+#define N_SCRATCH 200
 
 typedef struct x64emu_s {
     // cpu
@@ -73,7 +71,7 @@ typedef struct x64emu_s {
     x87control_t cw;
     uint16_t    dummy_cw;   // align...
     mmxcontrol_t mxcsr;
-    #ifdef RV64         // it would be better to use a dedicated register for this like arm64 xSavedSP, but we're running of of free registers.
+    #ifdef RV64         // it would be better to use a dedicated register for this like arm64 xSavedSP, but we're running out of free registers.
     uintptr_t xSPSave;  // sp base value of current dynarec frame, used by call/ret optimization to reset stack when unmatch.
     #endif
     fpu_ld_t    fpu_ld[8]; // for long double emulation / 80bits fld fst
@@ -87,9 +85,6 @@ typedef struct x64emu_s {
     multiuint_t op1;
     multiuint_t op2;
     multiuint_t res;
-    multiuint_t op1_sav;    // for dec/inc deferred flags, to be able to compute CF
-    multiuint_t res_sav;
-    deferred_flags_t df_sav;
     uint32_t    *x64emu_parity_tab; // helper
     // segments
     uint16_t    segs[6];        // only 32bits value?
@@ -109,14 +104,17 @@ typedef struct x64emu_s {
     forkpty_t*  forkpty_info;
     emu_flags_t flags;
     x64test_t   test;       // used for dynarec testing
+    // scratch stack, used for alignment of double and 64bits ints on arm. 200 elements should be enough
+    __int128_t dummy_align; // here to have scratch 128bits aligned
+    uint64_t scratch[N_SCRATCH];
+
+    // Warning, offsetof(x64emu_t, xxx) will be too big for fields below.
     #ifdef HAVE_TRACE
     sse_regs_t  old_xmm[16];
     sse_regs_t  old_ymm[16];
     reg64_t     oldregs[16];
     uintptr_t   prev2_ip;
     #endif
-    // scratch stack, used for alignment of double and 64bits ints on arm. 200 elements should be enough
-    uint64_t    scratch[200];
     // local stack, do be deleted when emu is freed
     void*       stack2free; // this is the stack to free (can be NULL)
     void*       init_stack; // initial stack (owned or not)
@@ -126,9 +124,25 @@ typedef struct x64emu_s {
     uintptr_t   old_savedsp;
     #endif
 
-    x64_ucontext_t *uc_link; // to handle setcontext
-
+    #ifdef _WIN32
+    uint64_t    win64_teb;
+    #endif
     int         type;       // EMUTYPE_xxx define
+    #ifdef BOX32
+    int         libc_err;   // copy of errno from libc
+    int         libc_herr;  // copy of h_errno from libc
+    unsigned short          libctype[384];   // copy from __ctype_b address might be too high
+    const unsigned short*   ref_ctype;
+    const unsigned short*   ctype;
+    int         libctolower[384];   // copy from __ctype_b_tolower address might be too high
+    const int*  ref_tolower;
+    const int*  tolower;
+    int         libctoupper[384];   // copy from __ctype_b_toupper address might be too high
+    const int*  ref_toupper;
+    const int*  toupper;
+    void*       res_state_32;  //32bits version of res_state
+    void*       res_state_64;
+    #endif
 } x64emu_t;
 
 #define EMUTYPE_NONE    0

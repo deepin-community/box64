@@ -2,6 +2,8 @@
 #define __MY_ALIGN__H_
 #include <stdint.h>
 
+#include "mysignal.h"
+
 typedef struct x64_va_list_s {
    unsigned int gp_offset;
    unsigned int fp_offset;
@@ -135,7 +137,7 @@ typdef struct {
 #define CREATE_SYSV_VALIST(A) \
   va_list sysv_varargs = (va_list)A
 // not creating CONVERT_VALIST(A) on purpose
-// this one will create a VA_LIST from x64_va_list using only GPRS and 100 stack element
+// this one will create a VA_LIST from x64_va_list using only GPRS (NOFLOAT) and 100 stack element
 #define CREATE_VALIST_FROM_VALIST(VA, SCRATCH)                          \
   va_list sysv_varargs;                                                 \
   {                                                                     \
@@ -179,6 +181,8 @@ void myStackAlignValist(x64emu_t* emu, const char* fmt, uint64_t* mystack, x64_v
 void myStackAlignWValist(x64emu_t* emu, const char* fmt, uint64_t* mystack, x64_va_list_t va);
 void myStackAlignScanfValist(x64emu_t* emu, const char* fmt, uint64_t* mystack, x64_va_list_t va);
 void myStackAlignScanfWValist(x64emu_t* emu, const char* fmt, uint64_t* mystack, x64_va_list_t va);
+void myStackAlignGVariantNewVa(x64emu_t* emu, const char* fmt, uint64_t* scratch, x64_va_list_t* b);
+void myStackAlignGVariantNew(x64emu_t* emu, const char* fmt, uint64_t* st, uint64_t* mystack, int xmm);
 #endif
 
 struct x64_stat64 {                   /* x86_64       arm64 */
@@ -218,6 +222,7 @@ void* add_xcb_connection(void* src);
 void del_xcb_connection(void* src);
 
 uintptr_t getVArgs(x64emu_t* emu, int pos, uintptr_t* b, int N);
+void setVArgs(x64emu_t* emu, int pos, uintptr_t* b, int N, uintptr_t a);
 
 // longjmp / setjmp
 typedef struct jump_buff_x64_s {
@@ -235,7 +240,10 @@ typedef struct __jmp_buf_tag_s {
     jump_buff_x64_t __jmpbuf;
     int              __mask_was_saved;
     #ifdef ANDROID
-    sigset_t         __saved_mask;
+    union {
+      sigset_t         __saved_mask;
+      sigset64_t         __saved_mask64;
+    };
     #else
     __sigset_t       __saved_mask;
     #endif

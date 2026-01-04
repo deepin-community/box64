@@ -3,13 +3,15 @@ Section: utils
 Priority: optional
 Maintainer: Johannes Schauer Marin Rodrigues <josch@debian.org>
 Build-Depends:
- cmake,
  debhelper-compat (= 13),
  dh-exec,
+ cmake,
  ninja-build,
  python3:native,
 Standards-Version: 4.6.2
 Homepage: https://github.com/ptitSeb/box64
+Vcs-Browser: https://salsa.debian.org/debian/box64
+Vcs-Git: https://salsa.debian.org/debian/box64.git
 Rules-Requires-Root: no
 
 Package: box64

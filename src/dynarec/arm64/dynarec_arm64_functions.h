@@ -51,14 +51,27 @@ int neoncache_combine_st(dynarec_arm_t* dyn, int ninst, int a, int b);  // with 
 // Do not allow i64 type
 int neoncache_no_i64(dynarec_arm_t* dyn, int ninst, int st, int a);
 
+// transform x86 flags to native flags
+uint8_t flag2native(uint8_t flags);
+// mark a instruction as using/generating flags. return flag
+uint8_t mark_natflag(dynarec_arm_t* dyn, int ninst, uint8_t flag, int before);
+// propage the use of nativeflags or not (done between step 0 and step 1)
+void updateNativeFlags(dynarec_arm_t* dyn);
+// raz arm speicifc state when an opcode is unused
+void rasNativeState(dynarec_arm_t* dyn, int ninst);
+// check if natives flags needs some tranform to/from x86 flags
+int nativeFlagsNeedsTransform(dynarec_arm_t* dyn, int ninst);
 
 // FPU Cache transformation (for loops) // Specific, need to be written by backend
 int fpuCacheNeedsTransform(dynarec_arm_t* dyn, int ninst);
 
 // Undo the changes of a neoncache to get the status before the instruction
 void neoncacheUnwind(neoncache_t* cache);
+void fpu_save_and_unwind(dynarec_arm_t* dyn, int ninst, neoncache_t* cache);
+void fpu_unwind_restore(dynarec_arm_t* dyn, int ninst, neoncache_t* cache);
 
-// Get if ED will have the correct parity. Not emiting anything. Parity is 2 for DWORD or 3 for QWORD
+
+// Get if ED will have the correct parity. Not emitting anything. Parity is 2 for DWORD or 3 for QWORD
 int getedparity(dynarec_native_t* dyn, int ninst, uintptr_t addr, uint8_t nextop, int parity, int delta);
 
 const char* getCacheName(int t, int n);
@@ -72,4 +85,18 @@ void fpu_reset_ninst(dynarec_native_t* dyn, int ninst);
 
 // is st freed
 int fpu_is_st_freed(dynarec_native_t* dyn, int ninst, int st);
+
+// propage FPU_BARRIER to trigger it as soon as possible (avoiding fetching an FPU reg if it's unused)
+void propagateFpuBarrier(dynarec_arm_t* dyn);
+// propage the uneeded flags on XMM/YMM regs (done between step 0 and step 1)
+void updateUneeded(dynarec_arm_t* dyn);
+
+void updateYmm0s(dynarec_arm_t* dyn, int ninst, int max_ninst_reached);
+
+// AVX helpers
+void avx_mark_zero(dynarec_arm_t* dyn, int ninst, int reg);
+int is_avx_zero(dynarec_arm_t* dyn, int ninst, int reg);
+int is_avx_zero_unset(dynarec_arm_t* dyn, int ninst, int reg);
+void avx_mark_zero_reset(dynarec_arm_t* dyn, int ninst);
+
 #endif //__DYNAREC_ARM_FUNCTIONS_H__

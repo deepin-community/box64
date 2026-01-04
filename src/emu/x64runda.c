@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <fenv.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,12 +12,12 @@
 #include "debug.h"
 #include "box64stack.h"
 #include "x64emu.h"
-#include "x64run.h"
 #include "x64emu_private.h"
 #include "x64run_private.h"
 #include "x64primop.h"
 #include "x64trace.h"
 #include "x87emu_private.h"
+#include "x87emu_setround.h"
 #include "box64context.h"
 #include "bridge.h"
 
@@ -94,15 +95,18 @@ uintptr_t RunDA(x64emu_t *emu, rex_t rex, uintptr_t addr)
 
     default:
         return 0;
-    } else
+    } else {
+        int oldround = fpu_setround(emu);
         switch((nextop>>3)&7) {
             case 0:     /* FIADD ST0, Ed int */
                 GETE4(0);
                 ST0.d += ED->sdword[0];
+                if(!emu->cw.f.C87_PC) ST0.d = (float)ST0.d;
                 break;
             case 1:     /* FIMUL ST0, Ed int */
                 GETE4(0);
                 ST0.d *= ED->sdword[0];
+                if(!emu->cw.f.C87_PC) ST0.d = (float)ST0.d;
                 break;
             case 2:     /* FICOM ST0, Ed int */
                 GETE4(0);
@@ -116,19 +120,25 @@ uintptr_t RunDA(x64emu_t *emu, rex_t rex, uintptr_t addr)
             case 4:     /* FISUB ST0, Ed int */
                 GETE4(0);
                 ST0.d -= ED->sdword[0];
+                if(!emu->cw.f.C87_PC) ST0.d = (float)ST0.d;
                 break;
             case 5:     /* FISUBR ST0, Ed int */
                 GETE4(0);
                 ST0.d = (double)ED->sdword[0] - ST0.d;
+                if(!emu->cw.f.C87_PC) ST0.d = (float)ST0.d;
                 break;
             case 6:     /* FIDIV ST0, Ed int */
                 GETE4(0);
                 ST0.d /= ED->sdword[0];
+                if(!emu->cw.f.C87_PC) ST0.d = (float)ST0.d;
                 break;
             case 7:     /* FIDIVR ST0, Ed int */
                 GETE4(0);
                 ST0.d = (double)ED->sdword[0] / ST0.d;
+                if(!emu->cw.f.C87_PC) ST0.d = (float)ST0.d;
                 break;
         }
+        fesetround(oldround);
+    }
    return addr;
 }

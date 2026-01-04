@@ -1,9 +1,9 @@
 #ifndef __LA64_LOCK__H__
 #define __LA64_LOCK__H__
 #include <stdint.h>
+#include "hostext.h"
 
-extern int la64_lamcas;
-extern int la64_lam_bh;
+extern cpu_ext_t cpuext;
 
 // Atomically store val at [p] if old [p] is ref. Return 0 if OK, 1 is not. p needs to be aligned
 extern int
@@ -26,6 +26,9 @@ extern void* la64_lock_storeifnull(void* p, void* val);
 
 // Atomically store value to [p] only if [p] is ref. Return new [p] value (so val or old)
 extern void* la64_lock_storeifref(void* p, void* val, void* ref);
+
+// Atomically store value to [p] only if [p] is ref. Return old [p] value (so ref or old)
+extern void* la64_lock_storeifref2(void* p, void* val, void* ref);
 
 // Atomically store value to [p] only if [p] is ref. Return new [p] value (so val or old)
 extern uint32_t la64_lock_storeifref_d(void* p, uint32_t val, uint32_t ref);

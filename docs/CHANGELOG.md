@@ -1,3 +1,161 @@
+v0.3.8
+======
+
+Highlights:
+
+* This version introduce DynaCache, a disk cache for the generated native code. It's not enabled by default for now (but it will use cache file if present by default). It can dramaticaly speedup the load of program (try with linux factorio for example). This version also improve in the volatile metadata handling. There is a massive compatiblity improvment for box32 and on all dynarec in general too. And few more function wrapping...
+
+    => DynaCache for faster loading of program, and avoid runtime hicups
+    => Batter box32 compatibility (much less "Out of Memory" error)
+    => Unity3D games on Wayland are working now
+    => Volatile Metadata fully supported and handled, making games like Starfield to just work.
+    => More work on AVX support for RV64 & LA64. LA64 almost there, while RV64 has Scalar only support (no hardware vector support yet for AVX)
+
+Version summary:
+
+* Improved and fixed memory tracking
+* Improved volatile metadata handling, and some light refactor on StrongMem emulation
+* Improved handling of TF flag
+* DynaCache: Introducing a way to cache on disk native generated code for faster startup time on subsequent release
+* DynaCache: Support for all 3 backends ARM64, RV64 & LA64
+* Interpreter: refactor opcodes decoding to have prefixes handled in a generic way
+* Interpreter: many small fixes
+* Dynarec: some optimisations in the jump table, to remove one memory fetch on each jump
+* Dynarec: create infrastructure to be able to change easily the reg mapping
+* Dynarec: optimised defered flag handling to limit cases where UpdateFlags is needed
+* Dynarec: Introduced BOX64_DYNAREC_NOHOTPAGE to disable detection of hotpages
+* Dynarec: ARM64: A few more opcode added
+* Dynarec: ARM64: Some small fixes and better handling of undefined behavior in opcodes, as well as undefined opcodes
+* Dynarec: ARM64: Implemented a Dynarec version of UpdateFlags, for improved performances
+* Dynarec; ARM64: Fixes/Improved SSE_FLUSHTO0 support
+* Dynarec: LA64: Added support for AVX (& friends) opcodes. Still need some debugging so AVX still disabled by default on LA64
+* Dynarec: LA64: Changed register mapping to be closer to the x86_64 ABI
+* Dynarec: LA64: RV64: Added limited support to SSE_FLUSHTO0
+* Dynarec: RV64: Many fixes and improvments for MMX opcodes
+* Dynarec: RV64: many Scalar version of AVX opcodes added
+* Dynarec: Many fixes to various OpCodes, on all 3 backends
+* WowBox64: Added minimal runtime, improved overall stability
+* BOX32: Wrapper: many new functions added, plus many fixes
+* BOX32: Improved memory hadnling, using 32bits personality and other tunning to get more reliable 32bits memory allocations
+* BOX64: Wrapper: some more wrapped functions added, including wayland (for Unity games on Wayland) and vulkan (more extensions)
+* BOX64: Wrapper: improved handling of some VarArg wrapped functions on non-ARM64 backend
+* RCFILE: Fixed MAXCPU not working properly with Wine programs
+* RCFILE: Generic Setup profile refined, and more games profile added
+* Trace: Added support for current libZydis
+    
+v0.3.6
+======
+
+Highlights:
+
+* This version introduces wowbox64.dll for Hangover; the ability to use the Volatile Metadata of Windows executables for x64 wine; and some better x87/SSE/AVX handling
+
+    => WowBox64 can be built directly from Box64 repo, and can be found in the CI artifacts also
+    => it also supports a subset of BOX64_XXXX settings, which can be set from command line or via a setting file ".box64rc" in the Wine prefix home
+    => Volatile Metadata, when present, allows only applying strong memory ordering when needed, as marked by the compiler, giving overall better performances
+    => The precision control bit of x87 is now handled, allowing some older games to run correctly
+    => More work has been done in the handling of precise NaN and Round handling in SSE & AVX opcodes
+
+Version summary:
+    
+* Added/fixed some Syscalls, helping Go programs
+* Wrapper: more functions added, and some fixes too. Vulkan is 1.4 now, among other things
+* Wrapper: Added a few more wrapped libs (like some avcodec and friends)
+* Improve internal memory allocator (with a dedicated allocator for small memory allocations), and fixed some issues around it
+* Improve internal mmaped file tracking
+* Box32: Some small refactoring around memory management and internal memory allocations
+* Box32: More functions wrapped
+* Box32: More libraries wrapped
+* ARM64: Added support for Atomic extension in many internal functions (not related to Dynarec).
+* ARM64: Added support for CRC2 extension for internal CRC functions
+* Interp: A few fixes to some opcodes, and better NAN handling on some selected SSE/AVX opcodes
+* Interp: Added a few opcodes with exotic prefixes
+* Dynarec: Introcude BOX64_DYNAREC_ROUND=2 to handle x87 precision control bit (ARM64 and RV64, LA64 still doesn't handle x87 yet)
+* Dynarec: Some small optimizations on Strongmem emulation, making it more efficient
+* Dynarec: Some speed optimizations on code that do SMC and waiting slot
+* Dynarec: Added CALLRET=2 to improve call/ret optimization compatibility with SMC code
+* Dynarec: ARM64: Various optimizations and fixes on some opcodes, especially AVX ones
+* Dynarec: ARM64: Added missing FASTNAN=0 handling on some SSE/AVX opcodes
+* Dynarec: ARM64: Added some exotic prefixed opcodes
+* Dynarec: ARM64: Avoid purging XMM/YMM register on intra-block loop if possible
+* Dynarec: RV64: Many fixes and improvments around x87 emulation
+* Dynarec: RV64: Added some more missing opcodes, especially some LOCK prefixed ones and many MMX ones
+* Dynarec: RV64: Various fixes on some existing opcodes
+* Dynarec: RV64: Improved nativeflags handling, allowing for more cases to use it
+* Dynarec: LA64: Added some more opcodes and MMX handling
+* Dynarec: LA64: Various fixes to some existing opcodes
+* Android: Improved signal handling, structure alignment, and transformation
+* WowBox64: Created the dll, with RcFile, Env. Var. handling and log printout (both ARM64 Dynarec and Interpreter available)
+* Cosim: Various fixes and improvements to limit false negatives and improve readability of logs
+* RcFile: A few fixes for some values that would be ignored
+
+v0.3.4
+======
+* This version is Faster and more compatible:
+    => The RV64 backend got faster and more stable, with lots of RVV 1.0 / xThreadVector support to emulate SSE/SSE2+ opcode (no AVX yet)
+    => On ARM64, Box64 now support more DRM types than before.
+    => BOX32 can run steam now. At least on ARM64 backend, it's still not working on RV64 and LA64 for now.
+* Added support to emulate Windows Syscall (needs Proton and a 48bits address space for now)
+* Added BOX64_DYNAREC_DIRTY to have a faster (but less safe) way to handle code that write in it's current page
+* Added a few rarely used opcodes
+* Added experimental support for GDBJIT, that allow an x86/x86_64 program to be debugged on ARM/RV64/LA64 platform with x86 regs and opcode view (might generate a lot of file tho)
+* Added support for Perf tools in a similar way if GDBJIT, to have an x86 fine view of the performances
+* Reworked undefined flags for common operations, to be similar to real CPU
+* Reworked cpuid handling, adding BOX64_CPUTYPE support to select Intel/AMD emulation (no 3DNow! support on AMD for now)
+* Reworked ucontext link to be closer to the real thing (and make it more simple)
+* Improved memory traking, file descriptor backed memory map, and detect wine loaded dll
+* Introduced settings per library and dll (mostly for Dynarec)
+* Wrapper: More functions addes, and some fixes too
+* BOX32: Many fixes around pthreads wrapping
+* BOX32: More functions wrapped.
+* BOX32: More libraies wrapped.
+* BOX32: Some reworks on how high memory (higher than 32bits) is masked, and can be used for Dynarec blocks.
+* Dynarec: The usual batch of fixes, improvments and opcodes additions on all 3 supported backend
+* Dynarec: Some fixes to NativeFlags handling, both on ARM64 and RV64
+* Dynarec: Added optimized REP MOVSB (expected for default CPUTYPE=0, according to new cpuid return)
+* Dynarec: LA64: more opcoded addes, using hardware extensions like AES
+* Dynarec: RV64: More work on using RVV 1.0 and xTheadVector extension to emulate SSE/SSE2+ opcodes
+* Dynarec: RV64: Added informations on flags when building blocks, to be used when a signal happens to rebuild a x86 context more accurate
+* Dynarec: ARM64: Reworked undefined flags for common operations, to be similar to real CPU
+* Dynarec: ARM64: Added informations on flags and xmm/ymm/x87 register when building blocks, to be used when a signal happens to rebuild a x86 context 100% accurate
+* TRACE: Reworked how trace for wrapped function call is printed.
+* TRACE: Reworked logs to prefix each line with a (optionaly colored) BOX32 or BOX64
+* COSIM: Some rework on cosim to limit false negative, especialy when handling x87 operations
+* LA64: Added limited support for ABI 1.0
+* CI: github CI now also generate MiceWine .rat archive, along with Winlator .wcp archive and regular linux builds.
+* RCFile: Added many new games profiles (both for speed improvment or for compatibilty)
+
+v0.3.2
+======
+* Introduced Box32 to run 32bits apps on 64bits OS
+    => Box32 is a build option for Box64, and is disabled by default
+    => Optionnal binfmt integration available for Box32
+    => Wrapped some basics libs, including graphics and sounds so a few games already works
+    => Work In Progress, many issues remain to be fixed, but some Linux games are playable
+* Introduced Native Flags. Can be controled with BOX64_DYNAREC_NATIVEFLAGS, but enabled by default
+    => Available on the 3 Dynarec backend, with different implementations
+    => ARM64 Dynarec build have all AVX/AVX2 extensions enabled by default
+    +> Can lead to large speedup on certain cases
+* Improved Strong Memory Model emulation, with better default options and a more efficiant emulation
+* Dynarec: RV64: using RVV (and XThreadVector) to implement SSEx opcodes, with some massive speedup when used!
+* Some bugfix and improvment in the Signal handler and internal memory tracking
+* Improvment to TRAP signal generation and Handling
+* Improved CPUID opcodes again, and the various virtual file in /proc that represent those data
+* Improved some x87 operations, like long double handling and infinity comparisons...
+* Dynarec: ARM64 fixes to a few opcodes
+* Dynarec: RV64 fixes to many opcodes
+* Dynarec: LA64 fixes to a few opcodes
+* Dynarec: RV64 fixes and improvments on LOCK prefixes opcodes
+* Dynarec: Many optimisation on some individual opcodes, an all 3 backends
+* WRAPPING: More libs and functions wrapped. Some wrapping fixes too
+* WREPPING: New wrapperhelper to help coding new wrapping & fixing/enhancing existing one
+* ElfLoader: Improved object fetching
+* New build profile for SD865 and ORYON
+* Changed the installation folder of x86 libs to avoid conflict with linux distro
+* Added a few syscalls
+* Some more Vulkan extensions wrapped
+* More work on build system, and github CI (generating WCP archive), with some fixes on the Android version (still not 100% operational)
+
 v0.3.0
 ======
 * AVX and AVX2 implemented, along with BMI1, BMI2, ADX, FMA, F16C and RDANDR extension!

@@ -21,11 +21,8 @@
 #include "fileutils.h"
 #include "gltools.h"
 
-#ifdef ANDROID
-    const char* gstglName = "libgstgl-1.0.so";
-#else
-    const char* gstglName = "libgstgl-1.0.so.0";
-#endif
+const char* gstglName = "libgstgl-1.0.so.0";
+#define ALTNAME "libgstgl-1.0.so"
 
 #define LIBNAME gstgl
 
@@ -268,7 +265,7 @@ EXPORT void my_gst_gl_window_set_resize_callback(x64emu_t* emu, void* window, vo
 }
 
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #define CUSTOM_INIT \

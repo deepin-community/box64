@@ -18,11 +18,9 @@
 #include "emu/x64emu_private.h"
 #include "gtkclass.h"
 
-#ifdef ANDROID
-    const char* gdk3Name = "libgdk-3.so";
-#else
-    const char* gdk3Name = "libgdk-3.so.0";
-#endif
+const char* gdk3Name = "libgdk-3.so.0";
+#define ALTNAME "libgdk-3.so"
+
 #define LIBNAME gdk3
 
 //#define ADDED_FUNCTIONS()
@@ -125,47 +123,37 @@ static void* findGCallbackFct(void* fct)
     printf_log(LOG_NONE, "Warning, no more slot for gdk3 generic GCallback\n");
     return NULL;
 }
+// EventHandler
+#define GO(A)   \
+static uintptr_t my_EventHandler_fct_##A = 0;                                       \
+static void* my_EventHandler_##A(void* a, void* b, void* c, void* d, void* e)       \
+{                                                                                   \
+    return (void*)RunFunctionFmt(my_EventHandler_fct_##A, "ppppp", a, b, c, d, e);  \
+}
+SUPER()
+#undef GO
+static void* findEventHandlerFct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_EventHandler_fct_##A == (uintptr_t)fct) return my_EventHandler_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_EventHandler_fct_##A == 0) {my_EventHandler_fct_##A = (uintptr_t)fct; return my_EventHandler_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for gdk3 generic EventHandler\n");
+    return NULL;
+}
 
 #undef SUPER
 
 
-static void my3_event_handler(void* event, my_signal_t* sig)
-{
-    RunFunctionFmt(sig->c_handler, "pp", event, sig->data)        ;
-}
-
 EXPORT void my3_gdk_event_handler_set(x64emu_t* emu, void* func, void* data, void* notify)
 {
-    if(!func)
-        return my->gdk_event_handler_set(func, data, notify);
-
-    my_signal_t* sig = new_mysignal(func, data, notify);
-    my->gdk_event_handler_set(my3_event_handler, sig, my_signal_delete);
+    return my->gdk_event_handler_set(findEventHandlerFct(func), data, findGDestroyNotifyFct(notify));
 }
 
-
-static void my3_input_function(my_signal_t* sig, int source, int condition)
-{
-    RunFunctionFmt(sig->c_handler, "pii", sig->data, source, condition)       ;
-}
-
-EXPORT int my3_gdk_input_add(x64emu_t* emu, int source, int condition, void* f, void* data)
-{
-    if(!f)
-        return my->gdk_input_add_full(source, condition, f, data, NULL);
-
-    my_signal_t* sig = new_mysignal(f, data, NULL);
-    return my->gdk_input_add_full(source, condition, my3_input_function, sig, my_signal_delete);
-}
-
-EXPORT int my3_gdk_input_add_full(x64emu_t* emu, int source, int condition, void* f, void* data, void* notify)
-{
-    if(!f)
-        return my->gdk_input_add_full(source, condition, f, data, notify);
-
-    my_signal_t* sig = new_mysignal(f, data, notify);
-    return my->gdk_input_add_full(source, condition, my3_input_function, sig, my_signal_delete);
-}
 
 EXPORT void my3_gdk_init(x64emu_t* emu, void* argc, void* argv)
 {
@@ -211,15 +199,11 @@ EXPORT void my3_gdk_threads_set_lock_functions(x64emu_t* emu, void* enter_fn, vo
 }
 
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #define ALTMY my3_
 
-#ifdef ANDROID
-#define NEEDED_LIBS "libgobject-2.0.so", "libgio-2.0.so", "libgdk_pixbuf-2.0.so"
-#else
 #define NEEDED_LIBS "libgobject-2.0.so.0", "libgio-2.0.so.0", "libgdk_pixbuf-2.0.so.0"
-#endif
 
 #include "wrappedlib_init.h"

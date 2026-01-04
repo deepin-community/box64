@@ -14,18 +14,19 @@ uintptr_t AddBridge(bridge_t* bridge, wrapper_t w, void* fnc, int N, const char*
 uintptr_t CheckBridged(bridge_t* bridge, void* fnc);
 uintptr_t AddCheckBridge(bridge_t* bridge, wrapper_t w, void* fnc, int N, const char* name);
 uintptr_t AddAutomaticBridge(bridge_t* bridge, wrapper_t w, void* fnc, int N, const char* name);
+uintptr_t AddAutomaticBridgeAlt(bridge_t* bridge, wrapper_t w, void* fnc, void* alt, int N, const char* name);
 void* GetNativeFnc(uintptr_t fnc);
 void* GetNativeFncOrFnc(uintptr_t fnc);
+void* GetNativeOrAlt(void* fnc, void* alt);
 
 uintptr_t AddVSyscall(bridge_t* bridge, int num);
 
-int hasAlternate(void* addr);
-void* getAlternate(void* addr);
-void addAlternate(void* addr, void* alt);
-void cleanAlternate(void);
 const char* getBridgeName(void* addr);
 
 void init_bridge_helper(void);
 void fini_bridge_helper(void);
+
+// Is what pointed at addr a native call? And if yes, to what function?
+int isNativeCallInternal(uintptr_t addr, int is32bits, uintptr_t* calladdress, uint16_t* retn);
 
 #endif //__BRIDGE_H_
