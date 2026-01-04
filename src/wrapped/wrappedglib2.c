@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dlfcn.h>
+#include <stdarg.h>
 
 #include "wrappedlibs.h"
 
@@ -20,14 +21,20 @@
 #include "gtkclass.h"
 #include "threads.h"
 
-#ifdef ANDROID
-    const char* glib2Name = "libglib-2.0.so";
-#else
-    const char* glib2Name = "libglib-2.0.so.0";
-#endif
+const char* glib2Name = "libglib-2.0.so.0";
+#define ALTNAME "libglib-2.0.so"
+
 #define LIBNAME glib2
 
 typedef void  (*vFppip_t)(void*, void*, int, void*);
+
+#ifdef HAVE_LD80LIBS
+#define ADDED_FUNCTIONS_2()
+#else
+typedef void (*vFppippDpDC_t)(void*, void*, int32_t, void*, void*, double, void*, double, uint8_t);
+#define ADDED_FUNCTIONS_2() \
+    GO(g_assertion_message_cmpnum, vFppippDpDC_t)
+#endif
 
 #define ADDED_FUNCTIONS() \
     GO(g_build_filenamev, pFp_t)                \
@@ -35,39 +42,12 @@ typedef void  (*vFppip_t)(void*, void*, int, void*);
     GO(g_build_pathv, pFpp_t)                   \
     GO(g_set_error_literal, vFppip_t)           \
     GO(g_variant_builder_add_value, vFpp_t)     \
+    ADDED_FUNCTIONS_2()
 
 #include "wrappedglib2types.h"
 
 #include "wrappercallback.h"
 
-EXPORT void* my_g_markup_vprintf_escaped(x64emu_t *emu, void* fmt, void* b) {
-    // need to align on arm
-    myStackAlign(emu, (const char*)fmt, b, emu->scratch, R_EAX, 1);
-    PREPARE_VALIST;
-    return my->g_markup_vprintf_escaped(fmt, VARARGS);
-}
-
-EXPORT void* my_g_build_filename(x64emu_t* emu, void* first, uintptr_t* b)
-{
-    int n = 0;
-    while (getVArgs(emu, 1, b, n++));
-    void* array[n+1];   // +1 for 1st (NULL terminal already included)
-    array[0] = first;
-    for(int i=0; i<n; ++i)
-        array[i+1] = (void*)getVArgs(emu, 1, b, i);
-    void* ret = my->g_build_filenamev(array);
-    return ret;
-}
-
-static int my_timeout_cb(my_signal_t* sig)
-{
-    return (int)RunFunctionFmt(sig->c_handler, "p", sig->data);
-}
-EXPORT uint32_t my_g_timeout_add(x64emu_t* emu, uint32_t interval, void* func, void* data)
-{
-    my_signal_t *sig = new_mysignal(func, data, NULL);
-    return my->g_timeout_add_full(0, interval, my_timeout_cb, sig, my_signal_delete);
-}
 typedef int (*GSourceFunc) (void* user_data);
 
 typedef struct my_GSourceFuncs_s {
@@ -166,28 +146,27 @@ SUPER()
 #undef GO
 // then the static functions callback that may be used with the structure, but dispatch also have a callback...
 #define GO(A)   \
-static uintptr_t fct_funcs_prepare_##A = 0;                                                \
-static int my_funcs_prepare_##A(void* source, int *timeout_) {                             \
-    return (int)RunFunctionFmt(fct_funcs_prepare_##A, "pp", source, timeout_); \
-}                                                                                          \
-static uintptr_t fct_funcs_check_##A = 0;                                     \
-static int my_funcs_check_##A(void* source) {                                 \
-    return (int)RunFunctionFmt(fct_funcs_check_##A, "p", source); \
-}                                                                             \
-static uintptr_t fct_funcs_dispatch_cb_##A = 0;                                            \
-static int my_funcs_dispatch_cb_##A(void* a, void* b, void* c, void* d) {                  \
-    return (int)RunFunctionFmt(fct_funcs_dispatch_cb_##A, "pppp", a, b, c, d); \
-}                                                                                          \
-static uintptr_t fct_funcs_dispatch_##A = 0;                           \
-static int my_funcs_dispatch_##A(void* source, void* cb, void* data) { \
-    uintptr_t old = fct_funcs_dispatch_cb_##A;                         \
-    fct_funcs_dispatch_cb_##A = (uintptr_t)cb;                         \
-    return (int)RunFunctionFmt(fct_funcs_dispatch_##A, "ppp", source, cb?my_funcs_dispatch_cb_##A:NULL, data); \
-    fct_funcs_dispatch_cb_##A = old;                                   \
-}                                                                      \
-static uintptr_t fct_funcs_finalize_##A = 0;                           \
-static int my_funcs_finalize_##A(void* source) {                       \
-    return (int)RunFunctionFmt(fct_funcs_finalize_##A, "p", source); \
+static int my_funcs_prepare_##A(void* source, int *timeout_) {                                      \
+    return (int)RunFunctionFmt((uintptr_t)ref_gsourcefuncs_##A->prepare, "pp", source, timeout_);   \
+}                                                                                                   \
+static uintptr_t fct_funcs_check_##A = 0;                                                           \
+static int my_funcs_check_##A(void* source) {                                                       \
+    return (int)RunFunctionFmt((uintptr_t)ref_gsourcefuncs_##A->check, "p", source);                \
+}                                                                                                   \
+static uintptr_t fct_funcs_dispatch_cb_##A = 0;                                                     \
+static int my_funcs_dispatch_cb_##A(void* a, void* b, void* c, void* d) {                           \
+    return (int)RunFunctionFmt(fct_funcs_dispatch_cb_##A, "pppp", a, b, c, d);                      \
+}                                                                                                   \
+static uintptr_t fct_funcs_dispatch_##A = 0;                                                        \
+static int my_funcs_dispatch_##A(void* source, void* cb, void* data) {                              \
+    uintptr_t old = fct_funcs_dispatch_cb_##A;                                                      \
+    fct_funcs_dispatch_cb_##A = (uintptr_t)cb;                                                      \
+    return (int)RunFunctionFmt((uintptr_t)ref_gsourcefuncs_##A->dispatch, "ppp", source, cb?my_funcs_dispatch_cb_##A:NULL, data); \
+    fct_funcs_dispatch_cb_##A = old;                                                                \
+}                                                                                                   \
+static uintptr_t fct_funcs_finalize_##A = 0;                                                        \
+static int my_funcs_finalize_##A(void* source) {                                                    \
+    return (int)RunFunctionFmt((uintptr_t)ref_gsourcefuncs_##A->finalize, "p", source);             \
 }
 SUPER()
 #undef GO
@@ -198,16 +177,14 @@ static my_GSourceFuncs_t* findFreeGSourceFuncs(my_GSourceFuncs_t* fcts)
     #define GO(A) if(ref_gsourcefuncs_##A == fcts) return &my_gsourcefuncs_##A;
     SUPER()
     #undef GO
-    #define GO(A) if(ref_gsourcefuncs_##A == 0) {   \
-        ref_gsourcefuncs_##A = fcts;                 \
-        my_gsourcefuncs_##A.prepare = (fcts->prepare)?((GetNativeFnc((uintptr_t)fcts->prepare))?GetNativeFnc((uintptr_t)fcts->prepare):my_funcs_prepare_##A):NULL;    \
-        fct_funcs_prepare_##A = (uintptr_t)fcts->prepare;                            \
-        my_gsourcefuncs_##A.check = (fcts->check)?((GetNativeFnc((uintptr_t)fcts->check))?GetNativeFnc((uintptr_t)fcts->check):my_funcs_check_##A):NULL;    \
-        fct_funcs_check_##A = (uintptr_t)fcts->check;                            \
-        my_gsourcefuncs_##A.dispatch = (fcts->dispatch)?((GetNativeFnc((uintptr_t)fcts->dispatch))?GetNativeFnc((uintptr_t)fcts->dispatch):my_funcs_dispatch_##A):NULL;    \
-        fct_funcs_dispatch_##A = (uintptr_t)fcts->dispatch;                            \
-        my_gsourcefuncs_##A.finalize = (fcts->finalize)?((GetNativeFnc((uintptr_t)fcts->finalize))?GetNativeFnc((uintptr_t)fcts->finalize):my_funcs_finalize_##A):NULL;    \
-        fct_funcs_finalize_##A = (uintptr_t)fcts->finalize;                            \
+    #define GO(A) if(ref_gsourcefuncs_##A == 0) {                                       \
+        ref_gsourcefuncs_##A = fcts;                                                    \
+        my_gsourcefuncs_##A.closure = fcts->closure;                                    \
+        my_gsourcefuncs_##A.marshal = fcts->marshal;                                    \
+        my_gsourcefuncs_##A.prepare = (fcts->prepare)?GetNativeOrAlt(fcts->prepare, my_funcs_prepare_##A):NULL;     \
+        my_gsourcefuncs_##A.check = (fcts->check)?GetNativeOrAlt(fcts->check, my_funcs_check_##A):NULL;             \
+        my_gsourcefuncs_##A.dispatch = (fcts->dispatch)?GetNativeOrAlt(fcts->dispatch, my_funcs_dispatch_##A):NULL; \
+        my_gsourcefuncs_##A.finalize = (fcts->finalize)?GetNativeOrAlt(fcts->finalize, my_funcs_finalize_##A):NULL; \
         return &my_gsourcefuncs_##A;                \
     }
     SUPER()
@@ -734,8 +711,76 @@ static void* findGThreadFuncFct(void* fct)
     printf_log(LOG_NONE, "Warning, no more slot for glib2 GThreadFunc callback\n");
     return NULL;
 }
+// TimeOut
+#define GO(A)   \
+static uintptr_t my_TimeOut_fct_##A = 0;            \
+static void my_TimeOut_##A(void* a)                 \
+{                                                   \
+    RunFunctionFmt(my_TimeOut_fct_##A, "p", a);     \
+}
+SUPER()
+#undef GO
+static void* findTimeOutFct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_TimeOut_fct_##A == (uintptr_t)fct) return my_TimeOut_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_TimeOut_fct_##A == 0) {my_TimeOut_fct_##A = (uintptr_t)fct; return my_TimeOut_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for glib2 TimeOut callback\n");
+    return NULL;
+}
+// GTraverseFunc ...
+#define GO(A)   \
+static uintptr_t my_GTraverseFunc_fct_##A = 0;                              \
+static int my_GTraverseFunc_##A(void* a, void* b, void* c)                  \
+{                                                                           \
+    return (int)RunFunctionFmt(my_GTraverseFunc_fct_##A, "ppp", a, b, c);   \
+}
+SUPER()
+#undef GO
+static void* findGTraverseFuncFct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_GTraverseFunc_fct_##A == (uintptr_t)fct) return my_GTraverseFunc_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_GTraverseFunc_fct_##A == 0) {my_GTraverseFunc_fct_##A = (uintptr_t)fct; return my_GTraverseFunc_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for glib2 GTraverseFunc callback\n");
+    return NULL;
+}
 
 #undef SUPER
+
+EXPORT void* my_g_markup_vprintf_escaped(x64emu_t *emu, void* fmt, void* b) {
+    // need to align on arm
+    myStackAlign(emu, (const char*)fmt, b, emu->scratch, R_EAX, 1);
+    PREPARE_VALIST;
+    return my->g_markup_vprintf_escaped(fmt, VARARGS);
+}
+
+EXPORT void* my_g_build_filename(x64emu_t* emu, void* first, uintptr_t* b)
+{
+    int n = 0;
+    while (getVArgs(emu, 1, b, n++));
+    void* array[n+1];   // +1 for 1st (NULL terminal already included)
+    array[0] = first;
+    for(int i=0; i<n; ++i)
+        array[i+1] = (void*)getVArgs(emu, 1, b, i);
+    void* ret = my->g_build_filenamev(array);
+    return ret;
+}
+
+EXPORT uint32_t my_g_timeout_add(x64emu_t* emu, uint32_t interval, void* func, void* data)
+{
+    return my->g_timeout_add(interval, findTimeOutFct(func), data);
+}
 
 EXPORT void my_g_list_free_full(x64emu_t* emu, void* list, void* free_func)
 {
@@ -897,12 +942,7 @@ EXPORT void my_g_main_context_set_poll_func(x64emu_t* emu, void* context, void* 
 
 EXPORT uint32_t my_g_idle_add_full(x64emu_t* emu, int priority, void* f, void* data, void* notify)
 {
-    if(!f)
-        return my->g_idle_add_full(priority, f, data, notify);
-
-    my_signal_t *sig = new_mysignal(f, data, notify);
-    printf_log(LOG_DEBUG, "glib2 Idle CB with priority %d created for %p, sig=%p\n", priority, f, sig);
-    return my->g_idle_add_full(priority, my_timeout_cb, sig, my_signal_delete);
+    return my->g_idle_add_full(priority, findTimeOutFct(f), data, findGDestroyNotifyFct(notify));
 }
 
 EXPORT void* my_g_hash_table_new(x64emu_t* emu, void* hash, void* equal)
@@ -936,17 +976,17 @@ EXPORT void* my_g_hash_table_find(x64emu_t* emu, void* table, void* f, void* dat
     return my->g_hash_table_find(table, findGHRFuncFct(f), data);
 }
 
-EXPORT int my_g_spawn_async_with_pipes(x64emu_t* emu, void* dir, void* argv, void* envp, int flags, void* f, void* data, void* child, void* input, void* output, void* err, void* error)
+EXPORT int my_g_spawn_async_with_pipes(x64emu_t* emu, void* dir, void* argv, void* envp, uint32_t flags, void* f, void* data, void* child, void* input, void* output, void* err, void* error)
 {
     return my->g_spawn_async_with_pipes(dir, argv, envp, flags, findSpawnChildSetupFct(f), data, child, input, output, err, error);
 }
 
-EXPORT int my_g_spawn_async(x64emu_t* emu, void* dir, void* argv, void* envp, int flags, void* f, void* data, void* child, void* error)
+EXPORT int my_g_spawn_async(x64emu_t* emu, void* dir, void* argv, void* envp, uint32_t flags, void* f, void* data, void* child, void* error)
 {
     return my->g_spawn_async(dir, argv, envp, flags, findSpawnChildSetupFct(f), data, child, error);
 }
 
-EXPORT int my_g_spawn_sync(x64emu_t* emu, void* dir, void* argv, void* envp, int flags, void* f, void* data, void* input, void* output, void* status, void* error)
+EXPORT int my_g_spawn_sync(x64emu_t* emu, void* dir, void* argv, void* envp, uint32_t flags, void* f, void* data, void* input, void* output, void* status, void* error)
 {
     return my->g_spawn_sync(dir, argv, envp, flags, findSpawnChildSetupFct(f), data, input, output, status, error);
 }
@@ -1012,7 +1052,7 @@ EXPORT void* my_g_thread_create(x64emu_t* emu, void* func, void* data, int joina
     return my->g_thread_create(my_prepare_thread(emu, func, data, 0, &et), et, joinable, error);
 }
 
-EXPORT void* my_g_thread_create_full(x64emu_t* emu, void* func, void* data, unsigned long stack, int joinable, int bound, int priority, void* error)
+EXPORT void* my_g_thread_create_full(x64emu_t* emu, void* func, void* data, unsigned long stack, int joinable, int bound, uint32_t priority, void* error)
 {
     void* et = NULL;
     return my->g_thread_create_full(my_prepare_thread(emu, func, data, stack, &et), et, stack, joinable, bound, priority, error);
@@ -1073,15 +1113,25 @@ EXPORT void* my_g_variant_new_va(x64emu_t* emu, char* fmt, void* endptr, x64_va_
     #ifdef CONVERT_VALIST
     CONVERT_VALIST(*b);
     #else
-    CREATE_VALIST_FROM_VALIST(*b, emu->scratch);
+      #if defined(__loongarch64) || defined(__riscv)
+        va_list sysv_varargs;
+        myStackAlignGVariantNewVa(emu, fmt, emu->scratch, b);
+        sysv_varargs = (va_list)emu->scratch;
+      #else
+        CREATE_VALIST_FROM_VALIST(*b, emu->scratch);
+      #endif
     #endif
-    va_list* aligned = &VARARGS;
-    return my->g_variant_new_va(fmt, endptr, &aligned);
+    return my->g_variant_new_va(fmt, endptr, &sysv_varargs);
 }
 
 EXPORT void* my_g_variant_new(x64emu_t* emu, char* fmt, uint64_t* V)
 {
+#if defined(__loongarch64) || defined(__riscv)
+    myStackAlignGVariantNew(emu, fmt, V, emu->scratch, R_EAX);
+    PREPARE_VALIST;
+#else
     CREATE_VALIST_FROM_VAARG(V, emu->scratch, 1);
+#endif
     return my->g_variant_new_va(fmt, NULL, &VARARGS);
 }
 
@@ -1108,12 +1158,12 @@ EXPORT void* my_g_log_set_default_handler(x64emu_t *emu, void* f, void* data)
     return reverseGLogFuncFct(my->g_log_set_default_handler(findGLogFuncFct(f), data));
 }
 
-EXPORT uint32_t my_g_io_add_watch_full(x64emu_t* emu, void* channel, int priority, int cond, void* f, void* data, void* notify)
+EXPORT uint32_t my_g_io_add_watch_full(x64emu_t* emu, void* channel, int priority, uint32_t cond, void* f, void* data, void* notify)
 {
     return my->g_io_add_watch_full(channel, priority, cond, findGIOFuncFct(f), data, findDestroyFct(notify));
 }
 
-EXPORT uint32_t my_g_io_add_watch(x64emu_t* emu, void* channel, int cond, void* f, void* data)
+EXPORT uint32_t my_g_io_add_watch(x64emu_t* emu, void* channel, uint32_t cond, void* f, void* data)
 {
     return my->g_io_add_watch(channel, cond, findGIOFuncFct(f), data);
 }
@@ -1195,7 +1245,7 @@ EXPORT uint32_t my_g_log_set_handler(x64emu_t *emu, void* domain, int level, voi
     return my->g_log_set_handler(domain, level, findGLogFuncFct(f), data);
 }
 
-EXPORT void my_g_set_error(x64emu_t *emu, void* err, void* domain, int code, void* fmt, uintptr_t* stack)
+EXPORT void my_g_set_error(x64emu_t *emu, void* err, void* domain, uint32_t code, void* fmt, uintptr_t* stack)
 {
     char buf[1000];
     myStackAlign(emu, fmt, stack, emu->scratch, R_EAX, 4);
@@ -1204,13 +1254,13 @@ EXPORT void my_g_set_error(x64emu_t *emu, void* err, void* domain, int code, voi
     my->g_set_error_literal(err, domain, code, buf);
 }
 
-EXPORT void* my_g_error_new(x64emu_t* emu, void* domain, int code, void* fmt, uintptr_t* b)
+EXPORT void* my_g_error_new(x64emu_t* emu, uint32_t domain, int code, void* fmt, uintptr_t* b)
 {
     myStackAlign(emu, fmt, b, emu->scratch, R_EAX, 3);
     PREPARE_VALIST;
     return my->g_error_new_valist(domain, code, fmt, VARARGS);
 }
-EXPORT void* my_g_error_new_valist(x64emu_t* emu, void* domain, int code, void* fmt, x64_va_list_t V)
+EXPORT void* my_g_error_new_valist(x64emu_t* emu, uint32_t domain, int code, void* fmt, x64_va_list_t V)
 {
     #ifdef CONVERT_VALIST
     CONVERT_VALIST(V);
@@ -1384,7 +1434,7 @@ EXPORT void* my_g_strconcat(x64emu_t* emu, void* first, uintptr_t* data)
     return p;
 }
 
-EXPORT void* my_g_markup_parse_context_new(x64emu_t* emu, void* parser, int flags, void* data, void* destroy)
+EXPORT void* my_g_markup_parse_context_new(x64emu_t* emu, void* parser, uint32_t flags, void* data, void* destroy)
 {
     return my->g_markup_parse_context_new(parser, flags, data, findDestroyFct(destroy));
 }
@@ -1449,8 +1499,70 @@ EXPORT void* my_g_bytes_new_with_free_func(x64emu_t* emu, void* data, unsigned l
     return my->g_bytes_new_with_free_func(data, n, findGDestroyNotifyFct(notify), user);
 }
 
+#ifndef HAVE_LD80BITS
+EXPORT void my_g_assertion_message_cmpnum(void* domain, void* file, int32_t line, void* func, void* expr, double arg1, void* comp, double arg2, uint8_t numtype)
+{
+    my->g_assertion_message_cmpnum(domain, file, line, func, expr, arg1, comp, arg2, numtype);
+}
+#endif
+
+EXPORT void* my_g_sequence_new(x64emu_t* emu, void* d)
+{
+    return my->g_sequence_new(findGDestroyNotifyFct(d));
+}
+
+EXPORT void* my_g_sequence_lookup(x64emu_t* emu, void* seq, void* data, void* f, void* cmp_data)
+{
+    return my->g_sequence_lookup(seq, data, findGCompareDataFuncFct(f), cmp_data);
+}
+
+EXPORT void* my_g_sequence_insert_sorted(x64emu_t* emu, void* seq, void* data, void* f, void* cmp_data)
+{
+    return my->g_sequence_insert_sorted(seq, data, findGCompareDataFuncFct(f), cmp_data);
+}
+
+EXPORT void* my_g_tree_new(x64emu_t* emu, void* f)
+{
+    return my->g_tree_new(findGCompareFuncFct(f));
+}
+
+EXPORT void* my_g_tree_new_full(x64emu_t* emu, void* f, void* data, void* d1, void* d2)
+{
+    return my->g_tree_new_full(findGCompareFuncFct(f), data, findGDestroyNotifyFct(d1), findGDestroyNotifyFct(d2));
+}
+
+EXPORT void my_g_tree_foreach(x64emu_t* emu, void* tree, void* f, void* data)
+{
+    my->g_tree_foreach(tree, findGTraverseFuncFct(f), data);
+}
+
+EXPORT void my_g_queue_insert_sorted(x64emu_t* emu, void* queue, void* data, void* f, void* user_data)
+{
+    my->g_queue_insert_sorted(queue, data, findGCompareDataFuncFct(f), user_data);
+}
+
+EXPORT void* my_g_async_queue_new_full(x64emu_t* emu, void* item_free_func)
+{
+    return my->g_async_queue_new_full(findGDestroyNotifyFct(item_free_func));
+}
+
+EXPORT void* my_g_thread_pool_new(x64emu_t* emu, void* func, void* user_data, int32_t max_threads, int32_t exclusive, void* error)
+{
+    return my->g_thread_pool_new(findGFuncFct(func), user_data, max_threads, exclusive, error);
+}
+
+EXPORT void my_g_async_queue_push_sorted(x64emu_t* emu, void* queue, void* data, void* func, void* user_data)
+{
+    my->g_async_queue_push_sorted(queue, data, findGCompareDataFuncFct(func), user_data);
+}
+
+EXPORT void my_g_thread_pool_set_sort_function(x64emu_t* emu, void* pool, void* func, void* user_data)
+{
+    my->g_thread_pool_set_sort_function(pool, findGCompareDataFuncFct(func), user_data);
+}
+
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #include "wrappedlib_init.h"

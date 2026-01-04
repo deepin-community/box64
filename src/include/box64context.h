@@ -1,17 +1,25 @@
 #ifndef __BOX64CONTEXT_H_
 #define __BOX64CONTEXT_H_
 #include <stdint.h>
-#include <pthread.h>
+
+#include "mypthread.h"
 #include "pathcoll.h"
 #include "dictionnary.h"
 #ifdef DYNAREC
 #include "dynarec/native_lock.h"
+#endif
+#ifndef BOX32_DEF
+#define BOX32_DEF
+typedef uint32_t ptr_t;
+typedef int32_t long_t;
+typedef uint32_t ulong_t;
 #endif
 
 #ifdef DYNAREC
 // disabling for now, seems to have a negative impact on performances
 //#define USE_CUSTOM_MUTEX
 #endif
+
 
 typedef struct elfheader_s elfheader_t;
 typedef struct cleanup_s cleanup_t;
@@ -26,8 +34,9 @@ typedef struct kh_defaultversion_s kh_defaultversion_t;
 typedef struct kh_mapsymbols_s kh_mapsymbols_t;
 typedef struct library_s library_t;
 typedef struct linkmap_s linkmap_t;
+typedef struct linkmap32_s linkmap32_t;
 typedef struct kh_threadstack_s kh_threadstack_t;
-typedef struct rbtree rbtree;
+typedef struct rbtree rbtree_t;
 typedef struct atfork_fnc_s {
     uintptr_t prepare;
     uintptr_t parent;
@@ -44,7 +53,11 @@ typedef struct kh_dynablocks_s  kh_dynablocks_t;
 typedef void* (*procaddress_t)(const char* name);
 typedef void* (*vkprocaddess_t)(void* instance, const char* name);
 
+#ifdef LA64_ABI_1
+#define MAX_SIGNAL 128
+#else
 #define MAX_SIGNAL 64
+#endif
 
 typedef struct tlsdatasize_s {
     int         tlssize;
@@ -97,9 +110,11 @@ typedef struct box64context_s {
 
     int                 argc;
     char**              argv;
+    ptr_t               argv32;
 
     int                 envc;
     char**              envv;
+    ptr_t               envv32;
 
     int                 orig_argc;
     char**              orig_argv;
@@ -124,7 +139,7 @@ typedef struct box64context_s {
     uintptr_t           ep;             // entry point
 
     lib_t               *maplib;        // lib and symbols handling
-    lib_t               *local_maplib;  // libs and symbols openned has local (only collection of libs, no symbols)
+    lib_t               *local_maplib;  // libs and symbols opened has local (only collection of libs, no symbols)
     dic_t               *versym;        // dictionnary of versioned symbols
     kh_mapsymbols_t     *globdata;      // GLOBAL_DAT relocation for COPY mapping in main elf
     kh_mapsymbols_t     *uniques;       // symbols with STB_GNU_UNIQUE bindings
@@ -162,7 +177,7 @@ typedef struct box64context_s {
     pthread_mutex_t     mutex_bridge;
     #endif
     uintptr_t           max_db_size;    // the biggest (in x86_64 instructions bytes) built dynablock
-    rbtree*             db_sizes;
+    rbtree_t*             db_sizes;
     int                 trace_dynarec;
     pthread_mutex_t     mutex_lock;     // this is for the Test interpreter
     #if defined(__riscv) || defined(__loongarch64)
@@ -174,7 +189,9 @@ typedef struct box64context_s {
     library_t           *sdl1mixerlib;
     library_t           *sdl2lib;
     library_t           *sdl2mixerlib;
+    library_t           *libx11;
     linkmap_t           *linkmap;
+    linkmap32_t         *linkmap32;
     void*               sdl1allocrw;    // SDL1 AllocRW/FreeRW function
     void*               sdl1freerw;
     void*               sdl2allocrw;    // SDL2 AllocRW/FreeRW function
@@ -218,21 +235,25 @@ typedef struct box64context_s {
     int                 stack_clone_used;
 
     // rolling logs
-    char*               *log_call;
-    char*               *log_ret;
+    char*               log_call;   // is a large string composed of slices of 256 chars
+    char*               log_ret;    // is a large string composed of sloces of 128 chars
     int                 current_line;
 
 } box64context_t;
 
 #ifndef USE_CUSTOM_MUTEX
-#define mutex_lock(A)       pthread_mutex_lock(A)
-#define mutex_trylock(A)    pthread_mutex_trylock(A)
-#define mutex_unlock(A)     pthread_mutex_unlock(A)
+#define mutex_lock(A)    pthread_mutex_lock(A)
+#define mutex_trylock(A) pthread_mutex_trylock(A)
+#define mutex_unlock(A)  pthread_mutex_unlock(A)
 #else
-int GetTID(void);
-#define mutex_lock(A)       {uint32_t tid = (uint32_t)GetTID(); while(native_lock_storeifnull_d(A, tid)) sched_yield();}
-#define mutex_trylock(A)    native_lock_storeifnull_d(A, (uint32_t)GetTID())
-#define mutex_unlock(A)     native_lock_storeifref_d(A, 0, (uint32_t)GetTID())
+#define mutex_lock(A)                             \
+    do {                                          \
+        uint32_t tid = (uint32_t)GetTID();        \
+        while (native_lock_storeifnull_d(A, tid)) \
+            sched_yield();                        \
+    } while (0)
+#define mutex_trylock(A) native_lock_storeifnull_d(A, (uint32_t)GetTID())
+#define mutex_unlock(A)  native_lock_storeifref_d(A, 0, (uint32_t)GetTID())
 #endif
 
 extern box64context_t *my_context; // global context
@@ -243,7 +264,7 @@ void FreeBox64Context(box64context_t** context);
 // Cycle log handling
 void freeCycleLog(box64context_t* ctx);
 void initCycleLog(box64context_t* context);
-void print_cycle_log(int loglevel);
+void print_rolling_log(int loglevel);
 
 // return the index of the added header
 int AddElfHeader(box64context_t* ctx, elfheader_t* head);
@@ -255,10 +276,9 @@ int AddTLSPartition(box64context_t* context, int tlssize);
 
 // defined in fact in threads.c
 void thread_set_emu(x64emu_t* emu);
+void thread_forget_emu();
 x64emu_t* thread_get_emu(void);
 
-// unlock mutex that are locked by current thread (for signal handling). Return a mask of unlock mutex
-int unlockMutex(void);
 // relock the muxtex that were unlocked
 void relockMutex(int locks);
 

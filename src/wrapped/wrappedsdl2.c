@@ -42,8 +42,17 @@ int EXPORT my2_SDL_HasRDTSC(void) __attribute__((alias("sdl_Yes")));
 int EXPORT my2_SDL_HasSSE(void) __attribute__((alias("sdl_Yes")));
 int EXPORT my2_SDL_HasSSE2(void) __attribute__((alias("sdl_Yes")));
 int EXPORT my2_SDL_HasSSE3(void) __attribute__((alias("sdl_Yes")));
-int EXPORT my2_SDL_HasSSE41(void) __attribute__((alias("sdl_No")));
-int EXPORT my2_SDL_HasSSE42(void) __attribute__((alias("sdl_No")));
+int EXPORT my2_SDL_HasSSE41(void) __attribute__((alias("sdl_Yes")));
+int EXPORT my2_SDL_HasSSE42(void) {
+    return BOX64ENV(sse42)?1:0;
+}
+int EXPORT my2_SDL_HasAVX(void) {
+    return BOX64ENV(avx)?1:0;
+}
+int EXPORT my2_SDL_HasAVX2(void) {
+    return BOX64ENV(avx2)?1:0;
+}
+int EXPORT my2_SDL_HasAVX512F(void) __attribute__((alias("sdl_No")));
 
 typedef struct {
   int32_t freq;
@@ -237,19 +246,15 @@ EXPORT int64_t my2_SDL_OpenAudio(x64emu_t* emu, void* d, void* o)
     return ret;
 }
 
-EXPORT int64_t my2_SDL_OpenAudioDevice(x64emu_t* emu, void* device, int64_t iscapture, void* d, void* o, int64_t allowed)
+EXPORT uint32_t my2_SDL_OpenAudioDevice(x64emu_t* emu, void* device, int iscapture, void* d, void* o, int allowed)
 {
-    SDL2_AudioSpec *desired = (SDL2_AudioSpec*)d;
+    SDL2_AudioSpec* desired = (SDL2_AudioSpec*)d;
 
     // create a callback
-    void *fnc = (void*)desired->callback;
+    void* fnc = (void*)desired->callback;
     desired->callback = find_AudioCallback_Fct(fnc);
-    int ret = my->SDL_OpenAudioDevice(device, iscapture, desired, (SDL2_AudioSpec*)o, allowed);
-    if (ret<=0) {
-        // error, clean the callback...
-        desired->callback = fnc;
-        return ret;
-    }
+    uint32_t ret = my->SDL_OpenAudioDevice(device, iscapture, desired, (SDL2_AudioSpec*)o, allowed);
+
     // put back stuff in place?
     desired->callback = fnc;
 
@@ -288,10 +293,10 @@ EXPORT void *my2_SDL_LoadWAV_RW(x64emu_t* emu, void* a, int b, void* c, void* d,
         RWNativeEnd2(rw);
     return r;
 }
-EXPORT int64_t my2_SDL_GameControllerAddMappingsFromRW(x64emu_t* emu, void* a, int b)
+EXPORT int my2_SDL_GameControllerAddMappingsFromRW(x64emu_t* emu, void* a, int b)
 {
     SDL2_RWops_t *rw = RWNativeStart2(emu, (SDL2_RWops_t*)a);
-    int64_t r = my->SDL_GameControllerAddMappingsFromRW(rw, b);
+    int r = my->SDL_GameControllerAddMappingsFromRW(rw, b);
     if(b==0)
         RWNativeEnd2(rw);
     return r;
@@ -416,7 +421,7 @@ EXPORT void *my2_SDL_RWFromMem(x64emu_t* emu, void* a, int b)
     return AddNativeRW2(emu, (SDL2_RWops_t*)r);
 }
 
-EXPORT int64_t my2_SDL_RWseek(x64emu_t* emu, void* a, int64_t offset, int64_t whence)
+EXPORT int64_t my2_SDL_RWseek(x64emu_t* emu, void* a, int64_t offset, int whence)
 {
     //sdl2_my_t *my = (sdl2_my_t *)emu->context->sdl2lib->priv.w.p2;
     SDL2_RWops_t *rw = RWNativeStart2(emu, (SDL2_RWops_t*)a);
@@ -431,17 +436,17 @@ EXPORT int64_t my2_SDL_RWtell(x64emu_t* emu, void* a)
     RWNativeEnd2(rw);
     return ret;
 }
-EXPORT uint64_t my2_SDL_RWread(x64emu_t* emu, void* a, void* ptr, uint64_t size, uint64_t maxnum)
+EXPORT size_t my2_SDL_RWread(x64emu_t* emu, void* a, void* ptr, size_t size, size_t maxnum)
 {
     SDL2_RWops_t *rw = RWNativeStart2(emu, (SDL2_RWops_t*)a);
-    uint64_t ret = RWNativeRead2(rw, ptr, size, maxnum);
+    size_t ret = RWNativeRead2(rw, ptr, size, maxnum);
     RWNativeEnd2(rw);
     return ret;
 }
-EXPORT uint64_t my2_SDL_RWwrite(x64emu_t* emu, void* a, const void* ptr, uint64_t size, uint64_t maxnum)
+EXPORT size_t my2_SDL_RWwrite(x64emu_t* emu, void* a, const void* ptr, size_t size, size_t maxnum)
 {
     SDL2_RWops_t *rw = RWNativeStart2(emu, (SDL2_RWops_t*)a);
-    uint64_t ret = RWNativeWrite2(rw, ptr, size, maxnum);
+    size_t ret = RWNativeWrite2(rw, ptr, size, maxnum);
     RWNativeEnd2(rw);
     return ret;
 }
@@ -550,7 +555,6 @@ static int get_sdl_priv(x64emu_t* emu, const char *sym_str, void **w, void **f)
             *f = dlsym(emu->context->box64lib, "my2_"#sym); \
             return *f != NULL; \
         }
-    #define GOS(sym, _w) GOM(sym, _w)
     #define DATA
 
     if(0);
@@ -559,7 +563,6 @@ static int get_sdl_priv(x64emu_t* emu, const char *sym_str, void **w, void **f)
     #undef GO
     #undef GOM
     #undef GO2
-    #undef GOS
     #undef DATA
     return 0;
 }
@@ -654,9 +657,9 @@ EXPORT void* my2_SDL_GL_GetProcAddress(x64emu_t* emu, void* name)
     if(!lib_checked) {
         lib_checked = 1;
             // check if libGL is loaded, load it if not (helps some Haxe games, like DeadCells or Nuclear Blaze)
-        if(!my_glhandle && !GetLibInternal(box64_libGL?box64_libGL:"libGL.so.1"))
+        if(!my_glhandle && !GetLibInternal(BOX64ENV(libgl)?BOX64ENV(libgl):"libGL.so.1"))
             // use a my_dlopen to actually open that lib, like SDL2 is doing...
-            my_glhandle = my_dlopen(emu, box64_libGL?box64_libGL:"libGL.so.1", RTLD_LAZY|RTLD_GLOBAL);
+            my_glhandle = my_dlopen(emu, BOX64ENV(libgl)?BOX64ENV(libgl):"libGL.so.1", RTLD_LAZY|RTLD_GLOBAL);
     }
     return getGLProcAddress(emu, (glprocaddress_t)my->SDL_GL_GetProcAddress, rname);
 }
@@ -803,7 +806,7 @@ EXPORT void my2_SDL_GetJoystickGUIDInfo(SDL_JoystickGUID guid, uint16_t *vend, u
 {
     uint16_t dummy = 0;
     if(my->SDL_GetJoystickGUIDInfo)
-        my->SDL_GetJoystickGUIDInfo(guid, vend, prod, ver, box64_sdl2_jguid?(&dummy):crc16);
+        my->SDL_GetJoystickGUIDInfo(guid, vend, prod, ver, BOX64ENV(sdl2_jguid)?(&dummy):crc16);
     // fallback
     else {
         uint16_t *guid16 = (uint16_t *)guid.data;
@@ -828,6 +831,14 @@ EXPORT unsigned long my2_SDL_GetThreadID(x64emu_t* emu, void* thread)
         sched_yield();
         ret = my->SDL_GetThreadID(thread);
     }
+    return ret;
+}
+
+EXPORT int my2_SDL_GetCPUCount(x64emu_t* emu)
+{
+    int ret = my->SDL_GetCPUCount();
+    if(BOX64ENV(maxcpu) && ret>BOX64ENV(maxcpu))
+        ret = BOX64ENV(maxcpu);
     return ret;
 }
 

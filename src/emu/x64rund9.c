@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <fenv.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,12 +12,12 @@
 #include "debug.h"
 #include "box64stack.h"
 #include "x64emu.h"
-#include "x64run.h"
 #include "x64emu_private.h"
 #include "x64run_private.h"
 #include "x64primop.h"
 #include "x64trace.h"
 #include "x87emu_private.h"
+#include "x87emu_setround.h"
 #include "box64context.h"
 #include "bridge.h"
 
@@ -33,6 +34,7 @@ uintptr_t RunD9(x64emu_t *emu, rex_t rex, uintptr_t addr)
     uint64_t ll;
     float f;
     reg64_t *oped;
+    int oldround;
     #ifdef TEST_INTERPRETER
     x64emu_t*emu = test->emu;
     #endif
@@ -123,70 +125,57 @@ uintptr_t RunD9(x64emu_t *emu, rex_t rex, uintptr_t addr)
             break;
 
         case 0xF0:  /* F2XM1 */
-            ST0.d = exp2(ST0.d) - 1.0;
+            if (ST0.d == 0)
+                break;
+            // Using the expm1 instead of exp2(ST0)-1 can avoid losing precision much,
+            // expecially when ST0 is close to zero (which loses the precise when -1).
+            // printf("%a, %a\n", LN2 * ST0.d, expm1(LN2 * ST0.d));
+            ST0.d = expm1(LN2 * ST0.d);
+            //    = 2^ST0 - 1 + error. (in math)
             break;
         case 0xF1:  /* FYL2X */
             ST(1).d *= log2(ST0.d);
             fpu_do_pop(emu);
             break;
         case 0xF2:  /* FPTAN */
+            oldround = fpu_setround(emu);
             ST0.d = tan(ST0.d);
+            fesetround(oldround);
             fpu_do_push(emu);
             ST0.d = 1.0;
             emu->sw.f.F87_C2 = 0;
             break;
         case 0xF3:  /* FPATAN */
+            oldround = fpu_setround(emu);
             ST1.d = atan2(ST1.d, ST0.d);
+            fesetround(oldround);
             fpu_do_pop(emu);
             break;
         case 0xF4:  /* FXTRACT */
-            ST0.d = frexp(ST0.d, &tmp32s);
             fpu_do_push(emu);
-            ST0.d = tmp32s;
+            if(isnan(ST1.d)) {
+                ST0.d = ST1.d;
+            } else if(isinf(ST1.d)) {
+                ST0.d = ST1.d;
+                ST1.d = INFINITY;
+            } else if(ST1.d==0.0) {
+                ST0.d = ST1.d;
+                ST1.d = -INFINITY;
+            } else {
+                // LD80bits doesn't have implicit "1" bit, so need to adjust for that
+                ST0.d = frexp(ST1.d, &tmp32s)*2;
+                ST1.d = tmp32s-1;
+            }
             break;
 
-        case 0xF8:  /* FPREM */
-            {
-                int e0, e1;
-                frexp(ST0.d, &e0);
-                frexp(ST1.d, &e1);
-                tmp32s = e0 - e1;
-            }
-            if(tmp32s<64)
-            {
-                ll = (int64_t)floor(ST0.d/ST1.d);
-                ST0.d = ST0.d - (ST1.d*ll);
-                emu->sw.f.F87_C2 = 0;
-                emu->sw.f.F87_C1 = (ll&1)?1:0;
-                emu->sw.f.F87_C3 = (ll&2)?1:0;
-                emu->sw.f.F87_C0 = (ll&4)?1:0;
-            } else {
-                ll = (int64_t)(floor((ST0.d/ST1.d))/exp2(tmp32s - 32));
-                ST0.d = ST0.d - ST1.d*ll*exp2(tmp32s - 32);
-                emu->sw.f.F87_C2 = 1;
-            }
-            break;
         case 0xF5:  /* FPREM1 */
             // get exponant(ST(0))-exponant(ST(1)) in temp32s
-            {
-                int e0, e1;
-                frexp(ST0.d, &e0);
-                frexp(ST1.d, &e1);
-                tmp32s = e0 - e1;
-            }
-            if(tmp32s<64)
-            {
-                ll = (int64_t)round(ST0.d/ST1.d);
-                ST0.d = ST0.d - (ST1.d*ll);
-                emu->sw.f.F87_C2 = 0;
-                emu->sw.f.F87_C1 = (ll&1)?1:0;
-                emu->sw.f.F87_C3 = (ll&2)?1:0;
-                emu->sw.f.F87_C0 = (ll&4)?1:0;
-            } else {
-                ll = (int64_t)(trunc((ST0.d/ST1.d))/exp2(tmp32s - 32));
-                ST0.d = ST0.d - ST1.d*ll*exp2(tmp32s - 32);
-                emu->sw.f.F87_C2 = 1;
-            }
+            ll = (int64_t)round(ST0.d/ST1.d);
+            ST0.d = ST0.d - (ST1.d*ll);
+            emu->sw.f.F87_C2 = 0;
+            emu->sw.f.F87_C1 = (ll&1)?1:0;
+            emu->sw.f.F87_C3 = (ll&2)?1:0;
+            emu->sw.f.F87_C0 = (ll&4)?1:0;
             break;
         case 0xF6:  /* FDECSTP */
             emu->top=(emu->top-1)&7;    // this will probably break a few things
@@ -197,16 +186,32 @@ uintptr_t RunD9(x64emu_t *emu, rex_t rex, uintptr_t addr)
             else
                 emu->top=(emu->top+1)&7;    // this will probably break a few things
             break;
+        case 0xF8:  /* FPREM */
+            ll = (int64_t)trunc(ST0.d/ST1.d);
+            ST0.d = ST0.d - (ST1.d*ll);
+            emu->sw.f.F87_C2 = 0;
+            emu->sw.f.F87_C1 = (ll&1)?1:0;
+            emu->sw.f.F87_C3 = (ll&2)?1:0;
+            emu->sw.f.F87_C0 = (ll&4)?1:0;
+            break;
         case 0xF9:  /* FYL2XP1 */
-            ST(1).d *= log2(ST0.d + 1.0);
+            // Using the log1p instead of log2(ST0+1) can avoid losing precision much,
+            // expecially when ST0 is close to zero (which loses the precise when +1).
+            ST(1).d = (ST(1).d * log1p(ST0.d)) / M_LN2;
+            //      = ST1 * log2(ST0 + 1) + error. (in math)
             fpu_do_pop(emu);
             break;
         case 0xFA:  /* FSQRT */
+            oldround = fpu_setround(emu);
             ST0.d = sqrt(ST0.d);
+            if(!emu->cw.f.C87_PC) ST0.d = (float)ST0.d;
+            fesetround(oldround);
             break;
         case 0xFB:  /* FSINCOS */
             fpu_do_push(emu);
+            oldround = fpu_setround(emu);
             sincos(ST1.d, &ST1.d, &ST0.d);
+            fesetround(oldround);
             emu->sw.f.F87_C2 = 0;
             break;
         case 0xFC:  /* FRNDINT */
@@ -214,15 +219,28 @@ uintptr_t RunD9(x64emu_t *emu, rex_t rex, uintptr_t addr)
             break;
         case 0xFD:  /* FSCALE */
             // this could probably be done by just altering the exponant part of the float...
-            if(ST0.d!=0.0)
-                ST0.d *= exp2(trunc(ST1.d));
+            if (ST1.d > INT32_MAX)
+                tmp32s = INT32_MAX;
+            else if (ST1.d < INT32_MIN)
+                tmp32s = INT32_MIN;
+            else
+                tmp32s = ST1.d;
+            if(ST0.d!=0.0) {
+                oldround = fpu_setround(emu);
+                ST0.d = ldexp(ST0.d, tmp32s);
+                fesetround(oldround);
+            }
             break;
         case 0xFE:  /* FSIN */
+            oldround = fpu_setround(emu);
             ST0.d = sin(ST0.d);
+            fesetround(oldround);
             emu->sw.f.F87_C2 = 0;
             break;
         case 0xFF:  /* FCOS */
+            oldround = fpu_setround(emu);
             ST0.d = cos(ST0.d);
+            fesetround(oldround);
             emu->sw.f.F87_C2 = 0;
             break;
 
@@ -238,11 +256,15 @@ uintptr_t RunD9(x64emu_t *emu, rex_t rex, uintptr_t addr)
                 break;
             case 2:     /* FST Ed, ST0 */
                 GETE4(0);
+                oldround = fpu_setround(emu);
                 *(float*)ED = ST0.d;
+                fesetround(oldround);
                 break;
             case 3:     /* FSTP Ed, ST0 */
                 GETE4(0);
+                oldround = fpu_setround(emu);
                 *(float*)ED = ST0.d;
+                fesetround(oldround);
                 fpu_do_pop(emu);
                 break;
             case 4:     /* FLDENV m */
@@ -270,5 +292,5 @@ uintptr_t RunD9(x64emu_t *emu, rex_t rex, uintptr_t addr)
             default:
                 return 0;
         }
-   return addr;
+    return addr;
 }

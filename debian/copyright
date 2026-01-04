@@ -6,15 +6,18 @@ Files-Excluded:
  .github
  .gitignore
  .travis.yml
- LLVMprivateGenerator
  debian
+ docs/box64.pod
+ docs/USAGE.md
  pkgbuilds
  src/wrapped/generated
- tests/benchfloat_android
- tests/extensions/mmx_android
- tests/bash
  tests/benchfloat
+ tests/benchfloat_android
+ tests/box64-bash
  tests/extensions/mmx
+ tests/extensions/mmx_android
+ tests/misc/gclosure
+ tests/misc/gvariant
  tests/test01
  tests/test01_android
  tests/test02
@@ -54,6 +57,7 @@ Files-Excluded:
  tests/test20
  tests/test20_android
  tests/test21
+ tests/test21_alt
  tests/test21_android
  tests/test22
  tests/test22_android
@@ -72,7 +76,51 @@ Files-Excluded:
  tests/test29
  tests/test29_android
  tests/test30
+ tests/test31
+ tests/test32
+ tests32/bash
+ tests32/benchfloat
+ tests32/extensions/mmx
+ tests32/test01
+ tests32/test02
+ tests32/test03
+ tests32/test04
+ tests32/test05
+ tests32/test06
+ tests32/test07
+ tests32/test08
+ tests32/test09
+ tests32/test10
+ tests32/test11
+ tests32/test12
+ tests32/test13
+ tests32/test14
+ tests32/test15
+ tests32/test15_dv1.so
+ tests32/test15_v1.so
+ tests32/test15_v2.so
+ tests32/test16
+ tests32/test16_dv1.so
+ tests32/test16_v1.so
+ tests32/test16_v2.so
+ tests32/test17
+ tests32/test17_o2
+ tests32/test18
+ tests32/test19
+ tests32/test20
+ tests32/test21
+ tests32/test21_v1.so
+ tests32/test21_v2.so
+ tests32/test22
+ tests32/test23
+ tests32/test24
+ tests32/test25
+ tests32/test26
+ x64android
  x64lib
+ x86android
+ x86lib
+
 
 Files: *
 Copyright: © 2022 Sebastien Chevalier <ptitseb@box86.org>

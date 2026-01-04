@@ -17,18 +17,11 @@
 #include "box64context.h"
 #include "emu/x64emu_private.h"
 
-#ifdef ANDROID
-    const char* libxrandrName = "libXrandr.so";
-#else
-    const char* libxrandrName = "libXrandr.so.2";
-#endif
+const char* libxrandrName = "libXrandr.so.2";
+#define ALTNAME "libXrandr.so"
 
 #define LIBNAME libxrandr
 
-#ifdef ANDROID
-#define NEEDED_LIBS "libX11.so", "libXext.so", "libXrender.so"
-#else
 #define NEEDED_LIBS "libX11.so.6", "libXext.so.6", "libXrender.so.1"
-#endif
 
 #include "wrappedlib_init.h"

@@ -12,6 +12,9 @@
 #include "x64emu.h"
 #include "box64context.h"
 #include "elfloader.h"
+#ifdef BOX32
+#include "box32.h"
+#endif
 
 #include "bridge.h"
 
@@ -254,15 +257,31 @@ static int AddNeededLib_add(lib_t** maplib, int local, needed_libs_t* needed, in
 
     if (lib->type == LIB_EMULATED) {
         // Need to add library to the linkmap (put here so the link is ordered)
-        linkmap_t *lm = addLinkMapLib(lib);
-        if(!lm) {
-            // Crashed already
-            printf_dump(LOG_DEBUG, "Failure to add lib linkmap\n");
-            return 1;
+        #ifdef BOX32
+        if(box64_is32bits) {
+            linkmap32_t *lm = addLinkMapLib32(lib);
+            if(!lm) {
+                // Crashed already
+                printf_dump(LOG_DEBUG, "Failure to add lib linkmap\n");
+                return 1;
+            }
+            lm->l_addr = (Elf32_Addr)to_ptrv(GetElfDelta(lib->e.elf));
+            lm->l_name = to_cstring(lib->name);
+            lm->l_ld = to_ptrv(GetDynamicSection(lib->e.elf));
+        } else
+        #endif
+        {
+            linkmap_t *lm = addLinkMapLib(lib);
+            if(!lm) {
+                // Crashed already
+                printf_dump(LOG_DEBUG, "Failure to add lib linkmap\n");
+                return 1;
+            }
+            lm->l_addr = (Elf64_Addr)GetElfDelta(lib->e.elf);
+            lm->l_name = lib->name;
+            lm->l_ld = GetDynamicSection(lib->e.elf);
         }
-        lm->l_addr = (Elf64_Addr)GetElfDelta(lib->e.elf);
-        lm->l_name = lib->name;
-        lm->l_ld = GetDynamicSection(lib->e.elf);
+        //TODO: it seems to never be removed!
     }
     IncRefCount(lib, emu);
     return 0;
@@ -335,14 +354,8 @@ int AddNeededLib(lib_t* maplib, int local, int bindnow, int deepbind, needed_lib
             printf_log(LOG_INFO, "Error initializing needed lib %s\n", needed->names[i]);
             ret = 1;
         }
-    // error while loadind lib, unload...
-    if(ret) {
-        int n = needed->size;
-        for (int i=0; i<n; ++i)
-            DecRefCount(&needed->libs[n-i-1], emu);
-    }
     // all done
-    if(allow_missing_libs) return 0;
+    if(BOX64ENV(allow_missing_libs)) return 0;
     return ret;
 }
 EXPORTDYN
@@ -351,7 +364,7 @@ void RemoveNeededLib(lib_t* maplib, int local, needed_libs_t* needed, box64conte
     if(!needed) // no needed libs, no problems
         return;
     for(int i=0; i<needed->size; ++i) {
-        if(box64_log>=LOG_DEBUG && needed->libs[i])
+        if (BOX64ENV(log)>=LOG_DEBUG && needed->libs[i])
             printf_dump(LOG_DEBUG, "Will remove after failed init %s\n", needed->names[i]);
         AddNeededLib_remove(maplib, local, &needed->libs[i], box64, emu);
     }
@@ -443,6 +456,67 @@ int GetNoSelfSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, u
     // nope, not found
     return weak;
 }
+static int isLibPreloaded(library_t* lib)
+{
+    if(my_context->preload)
+        for(int i=0; i<my_context->preload->size; ++i)
+            if(my_context->preload->libs[i] == lib)
+                return 1;
+    return 0;
+}
+int GetNextSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, elfheader_t* self, size_t size, int version, const char* vername, int veropt, void** elfsym)
+{
+    assert(self);   // need self for this one
+    int weak = 0;
+    int next = 0;
+    void* sym;
+    // search in needed libs from preloaded first, in order
+    if(my_context->preload)
+        for(int i=0; i<my_context->preload->size; ++i) {
+            if(next) {
+                if(GetLibGlobalSymbolStartEnd(my_context->preload->libs[i], name, start, end, size, &weak, &version, &vername, 0, &veropt, elfsym)) {
+                    return 1;
+                }
+                if(GetLibWeakSymbolStartEnd(my_context->preload->libs[i], name, start, end, size, &weak, &version, &vername, 0, &veropt, elfsym)) {
+                    return 1;
+                }
+            }
+            if(self==GetElf(my_context->preload->libs[i])) {
+                next = 1;
+            }
+        }
+    if(maplib==my_context->maplib) {
+        if(next) {
+            if((sym = ElfGetGlobalSymbolStartEnd(my_context->elfs[0], start, end, name, &version, &vername, 0, &veropt))) {
+                if(elfsym) *elfsym = sym;
+                return 1;
+            }
+            if((sym = ElfGetWeakSymbolStartEnd(my_context->elfs[0], start, end, name, &version, &vername, 0, &veropt))) {
+                if(elfsym) *elfsym = sym;
+                return 1;
+            }
+        }
+        if(self==my_context->elfs[0]) {
+            next = 1;
+        }
+    }
+    // search in global symbols
+    if(maplib) {
+        for(int i=0; i<maplib->libsz; ++i) if(!isLibPreloaded(maplib->libraries[i])) {
+            if(next) {
+                if(GetLibGlobalSymbolStartEnd(maplib->libraries[i], name, start, end, size, &weak, &version, &vername, 0, &veropt, elfsym)) {
+                    return 1;
+                }
+                if(GetLibWeakSymbolStartEnd(maplib->libraries[i], name, start, end, size, &weak, &version, &vername, 0, &veropt, elfsym)) {
+                    return 1;
+                }
+            }
+            if(self==GetElf(maplib->libraries[i]))
+                next = 1;
+        }
+    }
+    return 0;
+}
 static int GetGlobalSymbolStartEnd_internal(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, elfheader_t* self, int* version, const char** vername, int* veropt, void** elfsym)
 {
     int weak = 0;
@@ -492,7 +566,7 @@ int GetGlobalSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, u
     if(GetGlobalSymbolStartEnd_internal(maplib, name, start, end, self, &version, &vername, &veropt, elfsym)) {
         if(start && end && *end==*start) {  // object is of 0 sized, try to see an "_END" object of null size
             uintptr_t start2, end2;
-            char* buff = (char*)malloc(strlen(name) + strlen("_END") + 1);
+            char* buff = (char*)box_malloc(strlen(name) + strlen("_END") + 1);
             strcpy(buff, name);
             strcat(buff, "_END");
             if(GetGlobalSymbolStartEnd_internal(maplib, buff, &start2, &end2, self, &version, &vername, &veropt, elfsym)) {
@@ -505,13 +579,13 @@ int GetGlobalSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, u
     }
     #ifndef STATICBUILD
     // some special case symbol, defined inside box64 itself
-    if(!strcmp(name, "gdk_display") && !box64_nogtk) {
+    if(!strcmp(name, "gdk_display") && !BOX64ENV(nogtk)) {
         *start = (uintptr_t)my_GetGTKDisplay();
         *end = *start+sizeof(void*);
         printf_log(LOG_INFO, "Using global gdk_display for gdk-x11 (%p:%p)\n", start, *(void**)start);
         return 1;
     }
-    if(!strcmp(name, "g_threads_got_initialized") && !box64_nogtk) {
+    if(!strcmp(name, "g_threads_got_initialized") && !BOX64ENV(nogtk)) {
         *start = (uintptr_t)my_GetGthreadsGotInitialized();
         *end = *start+sizeof(int);
         printf_log(LOG_INFO, "Using global g_threads_got_initialized for gthread2 (%p:%p)\n", start, *(void**)start);
@@ -565,7 +639,7 @@ int GetGlobalWeakSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* star
     if(GetGlobalWeakSymbolStartEnd_internal(maplib, name, start, end, self, &version, &vername, &veropt, elfsym)) {
         if(start && end && *end==*start) {  // object is of 0 sized, try to see an "_END" object of null size
             uintptr_t start2, end2;
-            char* buff = (char*)malloc(strlen(name) + strlen("_END") + 1);
+            char* buff = (char*)box_malloc(strlen(name) + strlen("_END") + 1);
             strcpy(buff, name);
             strcat(buff, "_END");
             if(GetGlobalWeakSymbolStartEnd_internal(maplib, buff, &start2, &end2, self, &version, &vername, &veropt, elfsym)) {
@@ -578,14 +652,14 @@ int GetGlobalWeakSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* star
     }
     #ifndef STATICBUILD
     // some special case symbol, defined inside box64 itself
-    if(!strcmp(name, "gdk_display") && !box64_nogtk) {
+    if(!strcmp(name, "gdk_display") && !BOX64ENV(nogtk)) {
         *start = (uintptr_t)my_GetGTKDisplay();
         *end = *start+sizeof(void*);
         if(elfsym) *elfsym = NULL;
         printf_log(LOG_INFO, "Using global gdk_display for gdk-x11 (%p:%p)\n", start, *(void**)start);
         return 1;
     }
-    if(!strcmp(name, "g_threads_got_initialized") && !box64_nogtk) {
+    if(!strcmp(name, "g_threads_got_initialized") && !BOX64ENV(nogtk)) {
         *start = (uintptr_t)my_GetGthreadsGotInitialized();
         *end = *start+sizeof(int);
         if(elfsym) *elfsym = NULL;
@@ -703,14 +777,32 @@ int GetLocalSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, ui
     return 0;
 }
 
+int GetAnySymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uintptr_t* end, int version, const char* vername, int veropt)
+{
+    if(!maplib)
+        return 0;
+    for(int i=0; i<maplib->libsz; ++i) {
+        elfheader_t* h = GetElf(maplib->libraries[i]);
+        if(h && ElfGetSymbolStartEnd(h, start, end, name, &version, &vername, 1, &veropt))
+            return 1;
+    }
+    return 0;
+
+}
+
 int GetSymTabStartEnd(lib_t* maplib, const char* name, uintptr_t* start, uintptr_t* end)
 {
     if(!maplib)
         return 0;
     for(int i=0; i<maplib->libsz; ++i) {
         elfheader_t* h = GetElf(maplib->libraries[i]);
-        if(h && ElfGetSymTabStartEnd(h, start, end, name))
-            return 1;
+        if(box64_is32bits) {
+            if(h && ElfGetSymTabStartEnd32(h, start, end, name))
+                return 1;
+        } else {
+            if(h && ElfGetSymTabStartEnd64(h, start, end, name))
+                return 1;
+        }
     }
     return 0;
 }

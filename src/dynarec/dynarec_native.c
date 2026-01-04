@@ -1,15 +1,16 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <assert.h>
 
+#include "os.h"
 #include "debug.h"
 #include "box64context.h"
 #include "custommem.h"
-#include "dynarec.h"
+#include "box64cpu.h"
 #include "emu/x64emu_private.h"
-#include "x64run.h"
 #include "x64emu.h"
 #include "box64stack.h"
 #include "callback.h"
@@ -17,48 +18,51 @@
 #include "x64trace.h"
 #include "dynablock.h"
 #include "dynablock_private.h"
-#include "elfloader.h"
 
 #include "dynarec_native.h"
 #include "dynarec_arch.h"
 #include "dynarec_next.h"
+#include "gdbjit.h"
+#include "khash.h"
 
-void printf_x64_instruction(zydis_dec_t* dec, instruction_x64_t* inst, const char* name) {
+KHASH_MAP_INIT_INT64(table64, uint32_t)
+
+void printf_x64_instruction(dynarec_native_t* dyn, zydis_dec_t* dec, instruction_x64_t* inst, const char* name) {
     uint8_t *ip = (uint8_t*)inst->addr;
-    if(ip[0]==0xcc && ip[1]=='S' && ip[2]=='C') {
+    if (ip[0] == 0xcc && IsBridgeSignature(ip[1], ip[2])) {
         uintptr_t a = *(uintptr_t*)(ip+3);
         if(a==0) {
-            dynarec_log(LOG_NONE, "%s%p: Exit x64emu%s\n", (box64_dynarec_dump>1)?"\e[01;33m":"", (void*)ip, (box64_dynarec_dump>1)?"\e[m":"");
+            dynarec_log(LOG_NONE, "%s%p: Exit x64emu%s\n", (dyn->need_dump>1)?"\e[01;33m":"", (void*)ip, (dyn->need_dump>1)?"\e[m":"");
         } else {
-            dynarec_log(LOG_NONE, "%s%p: Native call to %p%s\n", (box64_dynarec_dump>1)?"\e[01;33m":"", (void*)ip, (void*)a, (box64_dynarec_dump>1)?"\e[m":"");
+            dynarec_log(LOG_NONE, "%s%p: Native call to %p%s\n", (dyn->need_dump>1)?"\e[01;33m":"", (void*)ip, (void*)a, (dyn->need_dump>1)?"\e[m":"");
         }
     } else {
         if(dec) {
-            dynarec_log(LOG_NONE, "%s%p: %s", (box64_dynarec_dump>1)?"\e[01;33m":"", ip, DecodeX64Trace(dec, inst->addr));
+            dynarec_log(LOG_NONE, "%s%p: %s", (dyn->need_dump > 1) ? "\e[01;33m" : "", ip, DecodeX64Trace(dec, inst->addr, 1));
         } else {
-            dynarec_log(LOG_NONE, "%s%p: ", (box64_dynarec_dump>1)?"\e[01;33m":"", ip);
+            dynarec_log(LOG_NONE, "%s%p: ", (dyn->need_dump>1)?"\e[01;33m":"", ip);
             for(int i=0; i<inst->size; ++i) {
-                dynarec_log(LOG_NONE, "%02X ", ip[i]);
+                dynarec_log_prefix(0, LOG_NONE, "%02X ", ip[i]);
             }
-            dynarec_log(LOG_NONE, " %s", name);
+            dynarec_log_prefix(0, LOG_NONE, " %s", name);
         }
         // print Call function name if possible
         if(ip[0]==0xE8 || ip[0]==0xE9) { // Call / Jmp
             uintptr_t nextaddr = (uintptr_t)ip + 5 + *((int32_t*)(ip+1));
-            printFunctionAddr(nextaddr, "=> ");
+            PrintFunctionAddr(nextaddr, "=> ");
         } else if(ip[0]==0xFF) {
             if(ip[1]==0x25) {
                 uintptr_t nextaddr = (uintptr_t)ip + 6 + *((int32_t*)(ip+2));
-                printFunctionAddr(nextaddr, "=> ");
+                PrintFunctionAddr(nextaddr, "=> ");
             }
         }
         // end of line and colors
-        dynarec_log(LOG_NONE, "%s\n", (box64_dynarec_dump>1)?"\e[m":"");
+        dynarec_log_prefix(0, LOG_NONE, "%s\n", (dyn->need_dump>1)?"\e[m":"");
     }
 }
 
 void add_next(dynarec_native_t *dyn, uintptr_t addr) {
-    if(!box64_dynarec_bigblock)
+    if (!BOX64DRENV(dynarec_bigblock))
         return;
     // exist?
     for(int i=0; i<dyn->next_sz; ++i)
@@ -121,6 +125,8 @@ int is_nops(dynarec_native_t *dyn, uintptr_t addr, int n)
         return is_nops(dyn, addr+1, n-1);
     if(n>1 && PK(0)==0x66)  // if opcode start with 0x66, and there is more after, than is *can* be a NOP
         return is_nops(dyn, addr+1, n-1);
+    if(n>1 && PK(0)==0xF3 && PK(1)==0x90)
+        return is_nops(dyn, addr+2, n-2);
     if(n>2 && PK(0)==0x0f && PK(1)==0x1f && PK(2)==0x00)
         return is_nops(dyn, addr+3, n-3);
     if(n>2 && PK(0)==0x8d && PK(1)==0x76 && PK(2)==0x00)    // lea esi, [esi]
@@ -229,6 +235,14 @@ int next_instruction(dynarec_native_t *dyn, uintptr_t addr)
         case 0xBE:
         case 0xBF:
             return 5;
+        case 0xF3:
+            nextop = PK(1);
+            switch(nextop) {
+                case 0x90:
+                    return 2;
+                default: break;
+            }
+            break;
         case 0xFF:
             nextop = PK(1);
             switch((nextop>>3)&7) {
@@ -268,7 +282,7 @@ void addInst(instsize_t* insts, size_t* size, int x64_size, int native_size)
         toadd = 1 + native_size/15;
     while(toadd) {
         if(x64_size>15)
-            insts[*size].x64 = 15;    
+            insts[*size].x64 = 15;
         else
             insts[*size].x64 = x64_size;
         x64_size -= insts[*size].x64;
@@ -282,25 +296,49 @@ void addInst(instsize_t* insts, size_t* size, int x64_size, int native_size)
     }
 }
 
+static kh_table64_t* khtable64 = NULL;
+
+int isTable64(dynarec_native_t *dyn, uint64_t val)
+{
+    if(!khtable64)
+        return 0;
+    if(kh_get(table64, khtable64, val)==kh_end(khtable64))
+        return 0;
+    return 1;
+}
 // add a value to table64 (if needed) and gives back the imm19 to use in LDR_literal
 int Table64(dynarec_native_t *dyn, uint64_t val, int pass)
 {
+    if(!khtable64)
+        khtable64 = kh_init(table64);
     // find the value if already present
-    int idx = -1;
-    for(int i=0; i<dyn->table64size && (idx==-1); ++i)
-        if(dyn->table64[i] == val)
-            idx = i;
-    // not found, add it
-    if(idx==-1) {
+    khint_t k = kh_get(table64, khtable64, val);
+    uint32_t idx = 0;
+    if(k!=kh_end(khtable64)) {
+        idx = kh_value(khtable64, k);
+    } else {
         idx = dyn->table64size++;
-        if(idx < dyn->table64cap)
-            dyn->table64[idx] = val;
-        else if(pass==3)
-            printf_log(LOG_NONE, "Warning, table64 bigger than expected %d vs %d\n", idx, dyn->table64cap);
+        if(pass==3) {
+            if(idx < dyn->table64cap)
+                dyn->table64[idx] = val;
+            else
+                printf_log(LOG_NONE, "Warning, table64 bigger than expected %d vs %d\n", idx, dyn->table64cap);
+        }
+        int ret;
+        k = kh_put(table64, khtable64, val, &ret);
+        kh_value(khtable64, k) = idx;
     }
     // calculate offset
     int delta = dyn->tablestart + idx*sizeof(uint64_t) - (uintptr_t)dyn->block;
     return delta;
+}
+
+void ResetTable64(dynarec_native_t* dyn)
+{
+    dyn->table64size = 0;
+    if(khtable64) {
+        kh_clear(table64, khtable64);
+    }
 }
 
 static void recurse_mark_alive(dynarec_native_t* dyn, int i)
@@ -314,9 +352,8 @@ static void recurse_mark_alive(dynarec_native_t* dyn, int i)
         recurse_mark_alive(dyn, i+1);
 }
 
-static int sizePredecessors(dynarec_native_t* dyn)
+static void sizePredecessors(dynarec_native_t* dyn)
 {
-    int pred_sz = 1;    // to be safe
     // compute total size of predecessor to allocate the array
     // mark alive...
     recurse_mark_alive(dyn, 0);
@@ -324,7 +361,6 @@ static int sizePredecessors(dynarec_native_t* dyn)
     int jmpto;
     for(int i=0; i<dyn->size; ++i) {
         if(dyn->insts[i].x64.alive && dyn->insts[i].x64.jmp && ((jmpto=dyn->insts[i].x64.jmp_insts)!=-1)) {
-            pred_sz++;
             dyn->insts[jmpto].pred_sz++;
         }
     }
@@ -336,11 +372,9 @@ static int sizePredecessors(dynarec_native_t* dyn)
     // second the "has_next"
     for(int i=0; i<dyn->size-1; ++i) {
         if(dyn->insts[i].x64.has_next) {
-            pred_sz++;
             dyn->insts[i+1].pred_sz++;
         }
     }
-    return pred_sz;
 }
 static void fillPredecessors(dynarec_native_t* dyn)
 {
@@ -367,9 +401,10 @@ static int updateNeed(dynarec_native_t* dyn, int ninst, uint8_t need) {
     while (ninst>=0) {
         // need pending but instruction is only a subset: remove pend and use an X_ALL instead
         need |= dyn->insts[ninst].x64.need_after;
-        if((need&X_PEND) && (dyn->insts[ninst].x64.state_flags==SF_SUBSET || dyn->insts[ninst].x64.state_flags==SF_SET || dyn->insts[ninst].x64.state_flags==SF_SET_NODF)) {
+        if((need&X_PEND) && ((dyn->insts[ninst].x64.state_flags==SF_SUBSET) || (dyn->insts[ninst].x64.state_flags==SF_SET) || (dyn->insts[ninst].x64.state_flags==SF_SET_NODF))) {
             need &=~X_PEND;
             need |= X_ALL;
+            STOP_NATIVE_FLAGS(dyn, ninst);
         }
         if((need&X_PEND) && dyn->insts[ninst].x64.state_flags==SF_SUBSET_PENDING) {
             need |= X_ALL&~(dyn->insts[ninst].x64.set_flags);
@@ -405,89 +440,45 @@ static int updateNeed(dynarec_native_t* dyn, int ninst, uint8_t need) {
     return ninst;
 }
 
-static void updateYmm0s(dynarec_native_t* dyn, int ninst, int max_ninst_reached) {
-    int can_incr = ninst == max_ninst_reached; // Are we the top-level call?
-    int ok = 1;
-    while ((can_incr || ok) && ninst<dyn->size) {
-        //if(box64_dynarec_dump) dynarec_log(LOG_NONE, "update ninst=%d (%d): can_incr=%d\n", ninst, max_ninst_reached, can_incr);
-        uint16_t new_purge_ymm, new_ymm0_in, new_ymm0_out;
-
-        if (ninst && dyn->insts[ninst].pred_sz && dyn->insts[ninst].x64.alive) {
-            uint16_t ymm0_union = 0, ymm0_inter = (uint16_t)-1; // The union of the empty set is empty, the intersection is the universe
-            for (int i = 0; i < dyn->insts[ninst].pred_sz; ++i) {
-                int pred = dyn->insts[ninst].pred[i];
-                //if(box64_dynarec_dump) dynarec_log(LOG_NONE, "\twith pred[%d] = %d", i, pred);
-                if (pred >= max_ninst_reached) {
-                    //if(box64_dynarec_dump) dynarec_log(LOG_NONE, " (skipped)\n");
-                    continue;
-                }
-
-                int pred_out = dyn->insts[pred].x64.has_callret ? 0 : dyn->insts[pred].ymm0_out;
-                //if(box64_dynarec_dump) dynarec_log(LOG_NONE, " ~> %04X\n", pred_out);
-                ymm0_union |= pred_out;
-                ymm0_inter &= pred_out;
-            }
-            //if(box64_dynarec_dump) dynarec_log(LOG_NONE, "\t=> %04X,%04X\n", ymm0_union, ymm0_inter);
-            // Notice the default values yield something coherent here (if all pred are after ninst)
-            new_purge_ymm = ymm0_union & ~ymm0_inter;
-            new_ymm0_in = ymm0_inter;
-            new_ymm0_out = (ymm0_inter | dyn->insts[ninst].ymm0_add) & ~dyn->insts[ninst].ymm0_sub;
-
-            if ((dyn->insts[ninst].purge_ymm != new_purge_ymm) || (dyn->insts[ninst].ymm0_in != new_ymm0_in) || (dyn->insts[ninst].ymm0_out != new_ymm0_out)) {
-                // Need to update self and next(s)
-                dyn->insts[ninst].purge_ymm = new_purge_ymm;
-                dyn->insts[ninst].ymm0_in = new_ymm0_in;
-                dyn->insts[ninst].ymm0_out = new_ymm0_out;
-
-                if (can_incr) {
-                    // We always have ninst == max_ninst_reached when can_incr == 1
-                    ++max_ninst_reached;
-                } else {
-                    // We need to stop here if the opcode has no "real" next or if we reached the ninst of the toplevel
-                    ok = (max_ninst_reached - 1 != ninst) && dyn->insts[ninst].x64.has_next && !dyn->insts[ninst].x64.has_callret;
-                }
-
-                int jmp = (dyn->insts[ninst].x64.jmp)?dyn->insts[ninst].x64.jmp_insts:-1;
-                if((jmp!=-1) && (jmp < max_ninst_reached)) {
-                    //if(box64_dynarec_dump) dynarec_log(LOG_NONE, "\t! jump to %d\n", jmp);
-                    // The jump goes before the last instruction reached, update the destination
-                    // If this is the top level call, this means the jump goes backward (jmp != ninst)
-                    // Otherwise, since we don't update all instructions, we may miss the update (don't use jmp < ninst)
-                    updateYmm0s(dyn, jmp, max_ninst_reached);
-                }
-            } else {
-                if (can_incr) {
-                    // We always have ninst == max_ninst_reached when can_incr == 1
-                    ++max_ninst_reached;
-
-                    // Also update jumps to before (they are skipped otherwise)
-                    int jmp = (dyn->insts[ninst].x64.jmp)?dyn->insts[ninst].x64.jmp_insts:-1;
-                    if((jmp!=-1) && (jmp < max_ninst_reached)) {
-                        //if(box64_dynarec_dump) dynarec_log(LOG_NONE, "\t! jump to %d\n", jmp);
-                        updateYmm0s(dyn, jmp, max_ninst_reached);
-                    }
-                } else {
-                    // We didn't update anything, we can leave
-                    ok = 0;
-                }
-            }
-        } else if (can_incr) {
-            // We always have ninst == max_ninst_reached when can_incr == 1
-            ++max_ninst_reached;
-        } else {
-            // We didn't update anything, we can leave
-            ok = 0;
-        }
-        ++ninst;
-    }
-}
-
 void* current_helper = NULL;
 static int static_jmps[MAX_INSTS+2];
 static uintptr_t static_next[MAX_INSTS+2];
-static uint64_t static_table64[(MAX_INSTS+3)/4];
 static instruction_native_t static_insts[MAX_INSTS+2] = {0};
+static callret_t static_callrets[MAX_INSTS+2] = {0};
+static int static_preds[MAX_INSTS*2+2]; // for the worst case scenario were all instructions are conditional jumps
+void* redundant_helper = NULL;
 // TODO: ninst could be a uint16_t instead of an int, that could same some temp. memory
+
+void ClearCache(void* start, size_t len)
+{
+#if defined(ARM64)
+    // manually clear cache, I have issue with regular function on Ampere with kernel 6.12.4
+    uintptr_t xstart = (uintptr_t)start;
+    uintptr_t xend = (uintptr_t)start + len + 1;
+    // Cache Type Info. Only grab the info once
+    static uint64_t ctr_el0 = 0;
+    if (ctr_el0 == 0)
+        __asm __volatile("mrs %0, ctr_el0" : "=r"(ctr_el0));
+    const int ctr_el0_idc = (ctr_el0>>28)&1;    // 0: datacache needs to be cleaned too, 1: no need
+    const int ctr_el0_dic = (ctr_el0>>29)&1;    // 0: instruction cache needs to be cleaned, 1: no need
+    const uintptr_t dcache_line_size = 4 << ((ctr_el0 >> 16) & 15);
+    const uintptr_t icache_line_size = 4 << ((ctr_el0 >> 0) & 15);
+    if (!ctr_el0_idc) {
+        //purge each dcache line if no icache is defined...
+        for (uint64_t addr=xstart&~(dcache_line_size-1); addr<xend; addr+=dcache_line_size)
+            __asm __volatile("dc cvau, %0" ::"r"(addr));
+    }
+    // ignoring idc...
+    if (1/*ctr_el0_idx*/) {
+        // purge each icache line
+        for (uint64_t addr=xstart&~(icache_line_size-1); addr<xend; addr+=icache_line_size)
+            __asm __volatile("ic ivau, %0" ::"r"(addr));
+    }
+    __asm __volatile("isb sy");
+#else
+    __builtin___clear_cache(start, start+len+1);
+#endif
+}
 
 void CancelBlock64(int need_lock)
 {
@@ -501,39 +492,45 @@ void CancelBlock64(int need_lock)
         }
     }
     current_helper = NULL;
+    redundant_helper = NULL;
     if(need_lock)
         mutex_unlock(&my_context->mutex_dyndump);
 }
 
-uintptr_t native_pass0(dynarec_native_t* dyn, uintptr_t addr, int alternate, int is32bits);
-uintptr_t native_pass1(dynarec_native_t* dyn, uintptr_t addr, int alternate, int is32bits);
-uintptr_t native_pass2(dynarec_native_t* dyn, uintptr_t addr, int alternate, int is32bits);
-uintptr_t native_pass3(dynarec_native_t* dyn, uintptr_t addr, int alternate, int is32bits);
+uintptr_t native_pass0(dynarec_native_t* dyn, uintptr_t addr, int alternate, int is32bits, int inst_max);
+uintptr_t native_pass1(dynarec_native_t* dyn, uintptr_t addr, int alternate, int is32bits, int inst_max);
+uintptr_t native_pass2(dynarec_native_t* dyn, uintptr_t addr, int alternate, int is32bits, int inst_max);
+uintptr_t native_pass3(dynarec_native_t* dyn, uintptr_t addr, int alternate, int is32bits, int inst_max);
 
-void* CreateEmptyBlock(dynablock_t* block, uintptr_t addr) {
-    block->isize = 0;
-    block->done = 0;
-    size_t sz = 4*sizeof(void*);
-    void* actual_p = (void*)AllocDynarecMap(sz);
+dynablock_t* CreateEmptyBlock(uintptr_t addr, int is32bits, int is_new) {
+    size_t sz = 4*sizeof(void*) + sizeof(dynablock_t);
+    void* actual_p = (void*)AllocDynarecMap(addr, sz, is_new);
     void* p = actual_p + sizeof(void*);
     if(actual_p==NULL) {
-        dynarec_log(LOG_INFO, "AllocDynarecMap(%p, %zu) failed, canceling block\n", block, sz);
+        dynarec_log(LOG_INFO, "AllocDynarecMap(%p, %zu) failed, canceling block\n", (void*)addr, sz);
         CancelBlock64(0);
         return NULL;
     }
+    dynablock_t* block = (dynablock_t*)(actual_p+4*sizeof(void*));
+    memset(block, 0, sizeof(dynablock_t));
+    // fill the block
+    block->x64_addr = (void*)addr;
+    block->isize = 0;
+    block->done = 0;
     block->size = sz;
     block->actual_block = actual_p;
     block->block = p;
     block->jmpnext = p;
+    block->is32bits = is32bits;
     *(dynablock_t**)actual_p = block;
     *(void**)(p+2*sizeof(void*)) = native_epilog;
     CreateJmpNext(block->jmpnext, p+2*sizeof(void*));
     // all done...
-    __clear_cache(actual_p, actual_p+sz);   // need to clear the cache before execution...
+    ClearCache(actual_p+sizeof(void*), 3*sizeof(void*));   // need to clear the cache before execution...
     return block;
 }
 
-void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bits) {
+dynablock_t* FillBlock64(uintptr_t addr, int alternate, int is32bits, int inst_max, int is_new) {
     /*
         A Block must have this layout:
 
@@ -545,22 +542,34 @@ void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bit
         B+16 .. B+23    : jmpnext (or jmp_epilog) address. jumpnext is used when the block needs testing
         B+24 .. B+31    : empty (in case an architecture needs more than 2 opcodes)
         B+32 .. B+32+sz : instsize (compressed array with each instruction length on x64 and native side)
+        C ..    C+sz    : arch: arch specific info (likes flags info) per inst (can be absent)
 
     */
-    if(addr>=box64_nodynarec_start && addr<box64_nodynarec_end) {
+    if(addr>=BOX64ENV(nodynarec_start) && addr<BOX64ENV(nodynarec_end)) {
         dynarec_log(LOG_INFO, "Create empty block in no-dynarec zone\n");
-        return CreateEmptyBlock(block, addr);
+        return CreateEmptyBlock(addr, is32bits, is_new);
+    }
+    if(checkInHotPage(addr)) {
+        dynarec_log(LOG_DEBUG, "Not creating dynablock at %p as in a HotPage\n", (void*)addr);
+        return NULL;
     }
     if(current_helper) {
-        dynarec_log(LOG_DEBUG, "Canceling dynarec FillBlock at %p as another one is going on\n", (void*)addr);
-        return NULL;
+        if(current_helper==redundant_helper) {
+            dynarec_log(LOG_INFO, "%04d|Warning: previous FillBlock did not cleaned up correctly (helper=%p, x64addr=%p, db=%p)\n", GetTID(), current_helper, (void*)((dynarec_native_t*)current_helper)->start, ((dynarec_native_t*)current_helper)->dynablock);
+            return NULL;
+        }
+        dynarec_log(LOG_INFO, "Warning: some static area curruption appeared (current=%p, redundant=%p)\n", current_helper, redundant_helper);
     }
     // protect the 1st page
     protectDB(addr, 1);
     // init the helper
     dynarec_native_t helper = {0};
-    current_helper = &helper;
-    helper.dynablock = block;
+    dynarec_native_t* dyn = &helper;
+#ifdef GDBJIT
+    helper.gdbjit_block = box_calloc(1, sizeof(gdbjit_block_t));
+#endif
+    redundant_helper = current_helper = &helper;
+    helper.dynablock = NULL;
     helper.start = addr;
     uintptr_t start = addr;
     helper.cap = MAX_INSTS;
@@ -569,20 +578,29 @@ void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bit
     helper.jmp_cap = MAX_INSTS;
     helper.next = static_next;
     helper.next_cap = MAX_INSTS;
-    helper.table64 = static_table64;
-    helper.table64cap = sizeof(static_table64)/sizeof(uint64_t);
+    helper.table64 = NULL;
+    helper.env = GetCurEnvByAddr(addr);
+    ResetTable64(&helper);
+    helper.table64cap = 0;
+    helper.end = addr + SizeFileMapped(addr);
+    if(helper.end == helper.start)  // that means there is no mmap with a file associated to the memory
+        helper.end = (uintptr_t)~0LL;
+    helper.need_reloc = IsAddrNeedReloc(addr);
     // pass 0, addresses, x64 jump addresses, overall size of the block
-    uintptr_t end = native_pass0(&helper, addr, alternate, is32bits);
+    uintptr_t end = native_pass0(&helper, addr, alternate, is32bits, inst_max);
     if(helper.abort) {
-        if(box64_dynarec_dump || box64_dynarec_log)dynarec_log(LOG_NONE, "Abort dynablock on pass0\n");
+        if(dyn->need_dump || BOX64ENV(dynarec_log))dynarec_log(LOG_NONE, "Abort dynablock on pass0\n");
         CancelBlock64(0);
         return NULL;
+    }
+    if(BOX64ENV(dynarec_x87double)==2) {
+        helper.need_x87check = 1;
     }
     // basic checks
     if(!helper.size) {
         dynarec_log(LOG_INFO, "Warning, null-sized dynarec block (%p)\n", (void*)addr);
         CancelBlock64(0);
-        return CreateEmptyBlock(block, addr);
+        return CreateEmptyBlock(addr, is32bits, is_new);
     }
     if(!isprotectedDB(addr, 1)) {
         dynarec_log(LOG_INFO, "Warning, write on current page on pass0, aborting dynablock creation (%p)\n", (void*)addr);
@@ -599,10 +617,17 @@ void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bit
         int i = helper.jmps[ii];
         uintptr_t j = helper.insts[i].x64.jmp;
         helper.insts[i].x64.jmp_insts = -1;
-        if(j<start || j>=end || j==helper.insts[i].x64.addr) {
-            if(j==helper.insts[i].x64.addr) // if there is a loop on some opcode, make the block "always to tested"
-                helper.always_test = 1;
+        #ifndef ARCH_NOP
+        if(j<start || j>=end || j==helper.insts[i].x64.addr)
+        #else
+        if(j<start || j>=end)
+        #endif
+        {
             helper.insts[i].x64.need_after |= X_PEND;
+            if(helper.insts[i].barrier_maybe) {
+                helper.insts[i].x64.barrier|=BARRIER_FLOAT;
+                helper.insts[i].barrier_maybe = 0;
+            }
         } else {
             // find jump address instruction
             int k=-1;
@@ -635,21 +660,33 @@ void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bit
                     k=i2;
             }*/
             if(k!=-1) {
-                if(!helper.insts[i].barrier_maybe)
-                    helper.insts[k].x64.barrier |= BARRIER_FULL;
+                // special case, loop on itself with some nop in between
+                if(k<i && !helper.insts[i].x64.has_next && is_nops(&helper, helper.insts[k].x64.addr, helper.insts[i].x64.addr-helper.insts[k].x64.addr)) {
+                    #ifndef ARCH_NOP
+                    helper.always_test = 1;
+                    k = -1;
+                    #else
+                    helper.insts[k].x64.self_loop = 1;
+                    #endif
+                }
                 helper.insts[i].x64.jmp_insts = k;
+                helper.insts[i].barrier_maybe = 0;
+            } else {
+                if(helper.insts[i].barrier_maybe) {
+                    helper.insts[i].x64.barrier|=BARRIER_FLOAT;
+                    helper.insts[i].barrier_maybe = 0;
+                }
             }
         }
     }
-    // no need for next anymore
-    helper.next_sz = helper.next_cap = 0;
-    helper.next = NULL;
     // fill predecessors with the jump address
-    int alloc_size = sizePredecessors(&helper);
-    helper.predecessor = (int*)alloca(alloc_size*sizeof(int));
+    sizePredecessors(&helper);
+    helper.predecessor = static_preds;
     fillPredecessors(&helper);
 
-    int pos = helper.size;
+    PREUPDATE_SPECIFICS(&helper);
+
+    int pos = helper.size-1;
     while (pos>=0)
         pos = updateNeed(&helper, pos, 0);
     // remove fpu stuff on non-executed code
@@ -658,7 +695,7 @@ void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bit
             int ii = i;
             while(ii<helper.size && !helper.insts[ii].pred_sz) {
                 fpu_reset_ninst(&helper, ii);
-                helper.insts[ii].ymm0_in = helper.insts[ii].ymm0_sub = helper.insts[ii].ymm0_add = helper.insts[ii].ymm0_out = helper.insts[ii].purge_ymm = 0;
+                RAZ_SPECIFIC(&helper, ii);
                 ++ii;
             }
             i = ii;
@@ -672,45 +709,94 @@ void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bit
         // NULL block after removing dead code, how is that possible?
         dynarec_log(LOG_INFO, "Warning, null-sized dynarec block after trimming dead code (%p)\n", (void*)addr);
         CancelBlock64(0);
-        return CreateEmptyBlock(block, addr);
+        return CreateEmptyBlock(addr, is32bits, is_new);
     }
-    updateYmm0s(&helper, 0, 0);
-
-
+    UPDATE_SPECIFICS(&helper);
+    // check for still valid close loop
+    for(int ii=0; ii<helper.jmp_sz && !helper.always_test; ++ii) {
+        int i = helper.jmps[ii];
+        if(helper.insts[i].x64.alive && (helper.insts[i].x64.jmp==helper.insts[i].x64.addr)) {
+            #ifndef ARCH_NOP
+            helper.always_test = 1;
+            #else
+            helper.insts[i].x64.self_loop = 1;
+            #endif
+        }
+    }
+    // no need for next anymore
+    helper.next_sz = helper.next_cap = 0;
+    helper.next = NULL;
+    ResetTable64(&helper);
+    helper.reloc_size = 0;
     // pass 1, float optimizations, first pass for flags
-    native_pass1(&helper, addr, alternate, is32bits);
+    native_pass1(&helper, addr, alternate, is32bits, inst_max);
     if(helper.abort) {
-        if(box64_dynarec_dump || box64_dynarec_log)dynarec_log(LOG_NONE, "Abort dynablock on pass1\n");
+        if(dyn->need_dump || BOX64ENV(dynarec_log))dynarec_log(LOG_NONE, "Abort dynablock on pass1\n");
         CancelBlock64(0);
         return NULL;
     }
-    
+    if(BOX64ENV(dynarec_x87double)==2) {
+        if(helper.need_x87check==1)
+            helper.need_x87check = 0;
+    }
+    POSTUPDATE_SPECIFICS(&helper);
+    ResetTable64(&helper);
+    helper.reloc_size = 0;
     // pass 2, instruction size
-    native_pass2(&helper, addr, alternate, is32bits);
+    helper.callrets = static_callrets;
+    native_pass2(&helper, addr, alternate, is32bits, inst_max);
     if(helper.abort) {
-        if(box64_dynarec_dump || box64_dynarec_log)dynarec_log(LOG_NONE, "Abort dynablock on pass2\n");
+        if(dyn->need_dump || BOX64ENV(dynarec_log))dynarec_log(LOG_NONE, "Abort dynablock on pass2\n");
         CancelBlock64(0);
         return NULL;
     }
     // keep size of instructions for signal handling
+    size_t native_size = (helper.native_size+7)&~7;   // round the size...
+    // check if size is overlimit
+    if((inst_max==MAX_INSTS) && (native_size>MAXBLOCK_SIZE)) {
+        int imax = 0;
+        size_t max_size = 0;
+        while((max_size<MAXBLOCK_SIZE) && (imax<helper.size)) {
+            max_size += helper.insts[imax].size;
+            ++imax;
+        }
+        if(!imax) return NULL; //that should never happens
+        --imax;
+        if(dyn->need_dump || BOX64ENV(dynarec_log))dynarec_log(LOG_NONE, "Dynablock oversized, with %zu (max=%zd), recomputing cutting at %d from %d\n", native_size, MAXBLOCK_SIZE, imax, helper.size);
+        CancelBlock64(0);
+        return FillBlock64(addr, alternate, is32bits, imax, is_new);
+    }
     size_t insts_rsize = (helper.insts_size+2)*sizeof(instsize_t);
     insts_rsize = (insts_rsize+7)&~7;   // round the size...
-    size_t native_size = (helper.native_size+7)&~7;   // round the size...
+    size_t arch_size = ARCH_SIZE(&helper);
+    size_t callret_size = helper.callret_size*sizeof(callret_t);
+    size_t reloc_size = helper.reloc_size*sizeof(uint32_t);
     // ok, now allocate mapped memory, with executable flag on
-    size_t sz = sizeof(void*) + native_size + helper.table64size*sizeof(uint64_t) + 4*sizeof(void*) + insts_rsize;
-    //           dynablock_t*     block (arm insts)            table64               jmpnext code       instsize
-    void* actual_p = (void*)AllocDynarecMap(sz);
+    size_t sz = sizeof(void*) + native_size + helper.table64size*sizeof(uint64_t) + 4*sizeof(void*) + insts_rsize + arch_size + callret_size + sizeof(dynablock_t) + reloc_size;
+    //           dynablock_t*     block (arm insts)            table64               jmpnext code       instsize     arch         callrets          dynablock           relocs
+    void* actual_p = (void*)AllocDynarecMap(addr, sz, is_new);
     void* p = (void*)(((uintptr_t)actual_p) + sizeof(void*));
     void* tablestart = p + native_size;
     void* next = tablestart + helper.table64size*sizeof(uint64_t);
     void* instsize = next + 4*sizeof(void*);
+    void* arch = instsize + insts_rsize;
+    void* callrets = arch + arch_size;
     if(actual_p==NULL) {
-        dynarec_log(LOG_INFO, "AllocDynarecMap(%p, %zu) failed, canceling block\n", block, sz);
+        dynarec_log(LOG_INFO, "AllocDynarecMap(%p, %zu) failed, canceling block\n", (void*)addr, sz);
         CancelBlock64(0);
         return NULL;
     }
     helper.block = p;
+    dynablock_t* block = (dynablock_t*)(callrets+callret_size);
+    memset(block, 0, sizeof(dynablock_t));
+    void* relocs = helper.need_reloc?(block+1):NULL;
+    // fill the block
+    block->x64_addr = (void*)addr;
+    block->isize = 0;
     block->actual_block = actual_p;
+    helper.relocs = relocs;
+    block->relocs = relocs;
+    block->table64size = helper.table64size;
     helper.native_start = (uintptr_t)p;
     helper.tablestart = (uintptr_t)tablestart;
     helper.jmp_next = (uintptr_t)next+sizeof(void*);
@@ -718,22 +804,31 @@ void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bit
     *(dynablock_t**)actual_p = block;
     helper.table64cap = helper.table64size;
     helper.table64 = (uint64_t*)helper.tablestart;
+    helper.callrets = (callret_t*)callrets;
+    block->table64 = helper.table64;
+    if(callret_size)
+        memcpy(helper.callrets, static_callrets, helper.callret_size*sizeof(callret_t));
+    helper.callret_size = 0;
     // pass 3, emit (log emit native opcode)
-    if(box64_dynarec_dump) {
-        dynarec_log(LOG_NONE, "%s%04d|Emitting %zu bytes for %u %s bytes", (box64_dynarec_dump>1)?"\e[01;36m":"", GetTID(), helper.native_size, helper.isize, is32bits?"x86":"x64"); 
-        printFunctionAddr(helper.start, " => ");
-        dynarec_log(LOG_NONE, "%s\n", (box64_dynarec_dump>1)?"\e[m":"");
+    if(dyn->need_dump) {
+        dynarec_log(LOG_NONE, "%s%04d|Emitting %zu bytes for %u %s bytes (native=%zu, table64=%zu, instsize=%zu, arch=%zu, callrets=%zu)", (dyn->need_dump>1)?"\e[01;36m":"", GetTID(), helper.native_size, helper.isize, is32bits?"x86":"x64", native_size, helper.table64size*sizeof(uint64_t), insts_rsize, arch_size, callret_size);
+        PrintFunctionAddr(helper.start, " => ");
+        dynarec_log_prefix(0, LOG_NONE, "%s\n", (dyn->need_dump>1)?"\e[m":"");
+    }
+    if (BOX64ENV(dynarec_gdbjit) && (!BOX64ENV(dynarec_gdbjit_end) || (addr >= BOX64ENV(dynarec_gdbjit_start) && addr < BOX64ENV(dynarec_gdbjit_end)))) {
+        GdbJITNewBlock(helper.gdbjit_block, (GDB_CORE_ADDR)block->actual_block, (GDB_CORE_ADDR)block->actual_block + native_size, helper.start);
     }
     int oldtable64size = helper.table64size;
     size_t oldnativesize = helper.native_size;
     size_t oldinstsize = helper.insts_size;
     int oldsize= helper.size;
     helper.native_size = 0;
-    helper.table64size = 0; // reset table64 (but not the cap)
+    ResetTable64(&helper); // reset table64 (but not the cap)
     helper.insts_size = 0;  // reset
-    native_pass3(&helper, addr, alternate, is32bits);
+    helper.reloc_size = 0;
+    native_pass3(&helper, addr, alternate, is32bits, inst_max);
     if(helper.abort) {
-        if(box64_dynarec_dump || box64_dynarec_log)dynarec_log(LOG_NONE, "Abort dynablock on pass1\n");
+        if(dyn->need_dump || BOX64ENV(dynarec_log))dynarec_log(LOG_NONE, "Abort dynablock on pass3\n");
         CancelBlock64(0);
         return NULL;
     }
@@ -751,32 +846,53 @@ void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bit
     block->jmpnext = next+sizeof(void*);
     block->always_test = helper.always_test;
     block->dirty = block->always_test;
+    block->is32bits = is32bits;
+    block->relocsize = helper.reloc_size*sizeof(uint32_t);
+    if(arch_size) {
+        block->arch_size = arch_size;
+        block->arch = ARCH_FILL(&helper, arch, arch_size);
+        if(!block->arch) block->arch_size = 0;
+    } else {
+        block->arch = NULL;
+        block->arch_size = arch_size;
+    }
+    block->callret_size = helper.callret_size;
+    block->callrets = helper.callrets;
+    block->native_size = native_size;
     *(dynablock_t**)next = block;
     *(void**)(next+3*sizeof(void*)) = native_next;
     CreateJmpNext(block->jmpnext, next+3*sizeof(void*));
+    ClearCache(block->jmpnext, 4*sizeof(void*));
     //block->x64_addr = (void*)start;
     block->x64_size = end-start;
     // all done...
-    __clear_cache(actual_p, actual_p+sz);   // need to clear the cache before execution...
+    if (BOX64ENV(dynarec_gdbjit) && (!BOX64ENV(dynarec_gdbjit_end) || (addr >= BOX64ENV(dynarec_gdbjit_start) && addr < BOX64ENV(dynarec_gdbjit_end)))) {
+        if (BOX64ENV(dynarec_gdbjit) != 3) GdbJITBlockReady(helper.gdbjit_block);
+        GdbJITBlockCleanup(helper.gdbjit_block);
+        #ifdef GDBJIT
+        block->gdbjit_block = helper.gdbjit_block;
+        #endif
+    }
+    ClearCache(actual_p+sizeof(void*), native_size);   // need to clear the cache before execution...
     block->hash = X31_hash_code(block->x64_addr, block->x64_size);
     // Check if something changed, to abort if it is
-    if((block->hash != hash)) {
+    if((helper.abort || (block->hash != hash))) {
         dynarec_log(LOG_DEBUG, "Warning, a block changed while being processed hash(%p:%ld)=%x/%x\n", block->x64_addr, block->x64_size, block->hash, hash);
         CancelBlock64(0);
         return NULL;
     }
     if((oldnativesize!=helper.native_size) || (oldtable64size<helper.table64size)) {
-        printf_log(LOG_NONE, "BOX64: Warning, size difference in block between pass2 (%zu, %d) & pass3 (%zu, %d)!\n", oldnativesize+oldtable64size*8, oldsize, helper.native_size+helper.table64size*8, helper.size);
+        printf_log(LOG_NONE, "Warning, size difference in block between pass2 (%zu, %d) & pass3 (%zu, %d)!\n", oldnativesize+oldtable64size*8, oldsize, helper.native_size+helper.table64size*8, helper.size);
         uint8_t *dump = (uint8_t*)helper.start;
         printf_log(LOG_NONE, "Dump of %d x64 opcodes:\n", helper.size);
         for(int i=0; i<helper.size; ++i) {
             printf_log(LOG_NONE, "%s%p:", (helper.insts[i].size2!=helper.insts[i].size)?"=====> ":"", dump);
             for(; dump<(uint8_t*)helper.insts[i+1].x64.addr; ++dump)
-                printf_log(LOG_NONE, " %02X", *dump);
-            printf_log(LOG_NONE, "\t%d -> %d", helper.insts[i].size2, helper.insts[i].size);
+                printf_log_prefix(0, LOG_NONE, " %02X", *dump);
+            printf_log_prefix(0, LOG_NONE, "\t%d -> %d", helper.insts[i].size2, helper.insts[i].size);
             if(helper.insts[i].ymm0_pass2 || helper.insts[i].ymm0_pass3)
-                printf_log(LOG_NONE, "\t %04x -> %04x", helper.insts[i].ymm0_pass2, helper.insts[i].ymm0_pass3);
-            printf_log(LOG_NONE, "\n");
+                printf_log_prefix(0, LOG_NONE, "\t %04x -> %04x", helper.insts[i].ymm0_pass2, helper.insts[i].ymm0_pass3);
+            printf_log_prefix(0, LOG_NONE, "\n");
         }
         printf_log(LOG_NONE, "Table64 \t%d -> %d\n", oldtable64size*8, helper.table64size*8);
         printf_log(LOG_NONE, " ------------\n");
@@ -784,24 +900,30 @@ void* FillBlock64(dynablock_t* block, uintptr_t addr, int alternate, int is32bit
         return NULL;
     }
     // ok, free the helper now
+    ResetTable64(&helper);
     //dynaFree(helper.insts);
     helper.insts = NULL;
     if(insts_rsize/sizeof(instsize_t)<helper.insts_size) {
-        printf_log(LOG_NONE, "BOX64: Warning, insts_size difference in block between pass2 (%zu) and pass3 (%zu), allocated: %zu\n", oldinstsize, helper.insts_size, insts_rsize/sizeof(instsize_t));
+        printf_log(LOG_NONE, "Warning, insts_size difference in block between pass2 (%zu) and pass3 (%zu), allocated: %zu\n", oldinstsize, helper.insts_size, insts_rsize/sizeof(instsize_t));
     }
     if(!isprotectedDB(addr, end-addr)) {
-        dynarec_log(LOG_DEBUG, "Warning, block unprotected while being processed %p:%ld, marking as need_test\n", block->x64_addr, block->x64_size);
+        dynarec_log(LOG_INFO, "Warning, block unprotected while being processed %p:%ld, marking as need_test\n", block->x64_addr, block->x64_size);
         block->dirty = 1;
         //protectDB(addr, end-addr);
     }
     if(getProtection(addr)&PROT_NEVERCLEAN) {
-        block->dirty = 1;
         block->always_test = 1;
     }
     if(block->always_test) {
-        dynarec_log(LOG_DEBUG, "Note: block marked as always dirty %p:%ld\n", block->x64_addr, block->x64_size);
+        dynarec_log(LOG_INFO, "Note: block marked as always dirty %p:%ld\n", block->x64_addr, block->x64_size);
+        #ifdef ARCH_NOP
+        // mark callrets to trigger SIGILL to check clean state
+        if(block->callret_size)
+            for(int i=0; i<block->callret_size; ++i)
+                *(uint32_t*)(block->block+block->callrets[i].offs) = ARCH_UDF;
+        #endif
     }
-    current_helper = NULL;
+    redundant_helper = current_helper = NULL;
     //block->done = 1;
-    return (void*)block;
+    return block;
 }

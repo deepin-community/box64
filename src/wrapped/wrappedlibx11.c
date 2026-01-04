@@ -17,11 +17,8 @@
 #include "emu/x64emu_private.h"
 #include "myalign.h"
 
-#ifdef ANDROID
-    const char* libx11Name = "libX11.so";
-#else
-    const char* libx11Name = "libX11.so.6";
-#endif
+const char* libx11Name = "libX11.so.6";
+#define ALTNAME "libX11.so"
 
 #define LIBNAME libx11
 
@@ -708,6 +705,30 @@ static void* find_async_handler_Fct(void* fct)
     return NULL;
 }
 
+// ResourceAlloc
+typedef unsigned long XID;
+#define GO(A)   \
+static uintptr_t my_ResourceAlloc_fct_##A = 0;                      \
+static XID my_ResourceAlloc_##A(void* dpy)                          \
+{                                                                   \
+    return (XID)RunFunctionFmt(my_ResourceAlloc_fct_##A, "p", dpy); \
+}
+SUPER()
+#undef GO
+static void* findResourceAllocFct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_ResourceAlloc_fct_##A == (uintptr_t)fct) return my_ResourceAlloc_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_ResourceAlloc_fct_##A == 0) {my_ResourceAlloc_fct_##A = (uintptr_t)fct; return my_ResourceAlloc_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for libX11 ResourceAlloc callback\n");
+    return NULL;
+}
+
 #undef SUPER
 
 void* my_XCreateImage(x64emu_t* emu, void* disp, void* vis, uint32_t depth, int32_t fmt, int32_t off
@@ -715,16 +736,16 @@ void* my_XCreateImage(x64emu_t* emu, void* disp, void* vis, uint32_t depth, int3
 
 int32_t my_XInitImage(x64emu_t* emu, void* img);
 
-void* my_XGetImage(x64emu_t* emu, void* disp, void* drawable, int32_t x, int32_t y
+void* my_XGetImage(x64emu_t* emu, void* disp, size_t drawable, int32_t x, int32_t y
                     , uint32_t w, uint32_t h, uint32_t plane, int32_t fmt);
 
-int32_t my_XPutImage(x64emu_t* emu, void* disp, void* drawable, void* gc, void* image
+int32_t my_XPutImage(x64emu_t* emu, void* disp, size_t drawable, void* gc, void* image
                     , int32_t src_x, int32_t src_y, int32_t dst_x, int32_t dst_y
                     , uint32_t w, uint32_t h);
 
-void* my_XGetSubImage(x64emu_t* emu, void* disp, void* drawable
+void* my_XGetSubImage(x64emu_t* emu, void* disp, size_t drawable
                     , int32_t x, int32_t y
-                    , uint32_t w, uint32_t h, uint32_t plane, int32_t fmt
+                    , uint32_t w, uint32_t h, size_t plane, int32_t fmt
                     , void* image, int32_t dst_x, int32_t dst_y);
 
 void my_XDestroyImage(x64emu_t* emu, void* image);
@@ -759,43 +780,7 @@ typedef struct {
 #define XNStringConversionCallback "stringConversionCallback"
 
 // utility functions
-#define SUPER() \
-GO(0)   \
-GO(1)   \
-GO(2)   \
-GO(3)   \
-GO(4)   \
-GO(5)   \
-GO(6)   \
-GO(7)   \
-GO(8)   \
-GO(9)   \
-GO(10)  \
-GO(11)  \
-GO(12)  \
-GO(13)  \
-GO(14)  \
-GO(15)  \
-GO(16)  \
-GO(17)  \
-GO(18)  \
-GO(19)  \
-GO(20)  \
-GO(21)  \
-GO(22)  \
-GO(23)  \
-GO(24)  \
-GO(25)  \
-GO(26)  \
-GO(27)  \
-GO(28)  \
-GO(29)  \
-GO(30)  \
-GO(31)
-
-
-
-
+#include "super100.h"
 
 // XNGeometryCallback
 #define GO(A)   \
@@ -1090,98 +1075,86 @@ GO(XNStatusDrawCallback)            \
 GO(XNR6PreeditCallback)             \
 GO(XNStringConversionCallback)
 
-#define VA_CALL(FUNC, FIRST_ARG, VAARGS, VAARGSZ, RESULT)       \
+#define VA_CALL(FUNC, FIRST_ARG, N, VAARGSZ, RESULT)       \
 switch (VAARGSZ)                                                \
 {                                                               \
 case 2:                                                         \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], NULL);       \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), NULL);       \
     break;                                                      \
 case 4:                                                         \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], VAARGS[2], VAARGS[3], NULL);     \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), getVArgs(emu, N, va, 2), getVArgs(emu, N, va, 3), NULL);     \
     break;                                                                          \
 case 6:                                                                             \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], VAARGS[2], VAARGS[3], VAARGS[4], VAARGS[5], NULL);   \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), getVArgs(emu, N, va, 2), getVArgs(emu, N, va, 3), getVArgs(emu, N, va, 4), getVArgs(emu, N, va, 5), NULL);   \
     break;                                                                                              \
 case 8:                                                                                                 \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], VAARGS[2], VAARGS[3], VAARGS[4], VAARGS[5], VAARGS[6], VAARGS[7], NULL); \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), getVArgs(emu, N, va, 2), getVArgs(emu, N, va, 3), getVArgs(emu, N, va, 4), getVArgs(emu, N, va, 5), getVArgs(emu, N, va, 6), getVArgs(emu, N, va, 7), NULL); \
     break;                                                                                                                  \
 case 10:                                                                                                                    \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], VAARGS[2], VAARGS[3], VAARGS[4], VAARGS[5], VAARGS[6], VAARGS[7], VAARGS[8], VAARGS[9], NULL);   \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), getVArgs(emu, N, va, 2), getVArgs(emu, N, va, 3), getVArgs(emu, N, va, 4), getVArgs(emu, N, va, 5), getVArgs(emu, N, va, 6), getVArgs(emu, N, va, 7), getVArgs(emu, N, va, 8), getVArgs(emu, N, va, 9), NULL);   \
     break;                                                                                                                                          \
 case 12:                                                                                                                                            \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], VAARGS[2], VAARGS[3], VAARGS[4], VAARGS[5], VAARGS[6], VAARGS[7], VAARGS[8], VAARGS[9],  VAARGS[10], VAARGS[11], NULL);  \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), getVArgs(emu, N, va, 2), getVArgs(emu, N, va, 3), getVArgs(emu, N, va, 4), getVArgs(emu, N, va, 5), getVArgs(emu, N, va, 6), getVArgs(emu, N, va, 7), getVArgs(emu, N, va, 8), getVArgs(emu, N, va, 9),  getVArgs(emu, N, va, 10), getVArgs(emu, N, va, 11), NULL);  \
     break;                                                                                                                                                                  \
 case 14:                                                                                                                                                                    \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], VAARGS[2], VAARGS[3], VAARGS[4], VAARGS[5], VAARGS[6], VAARGS[7], VAARGS[8], VAARGS[9],  VAARGS[10], VAARGS[11], VAARGS[12], VAARGS[13], NULL);  \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), getVArgs(emu, N, va, 2), getVArgs(emu, N, va, 3), getVArgs(emu, N, va, 4), getVArgs(emu, N, va, 5), getVArgs(emu, N, va, 6), getVArgs(emu, N, va, 7), getVArgs(emu, N, va, 8), getVArgs(emu, N, va, 9),  getVArgs(emu, N, va, 10), getVArgs(emu, N, va, 11), getVArgs(emu, N, va, 12), getVArgs(emu, N, va, 13), NULL);  \
     break;                                                                                                                                                                                          \
 case 16:                                                                                                                                                                                            \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], VAARGS[2], VAARGS[3], VAARGS[4], VAARGS[5], VAARGS[6], VAARGS[7], VAARGS[8], VAARGS[9],  VAARGS[10], VAARGS[11], VAARGS[12], VAARGS[13], VAARGS[14], VAARGS[15], NULL);  \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), getVArgs(emu, N, va, 2), getVArgs(emu, N, va, 3), getVArgs(emu, N, va, 4), getVArgs(emu, N, va, 5), getVArgs(emu, N, va, 6), getVArgs(emu, N, va, 7), getVArgs(emu, N, va, 8), getVArgs(emu, N, va, 9),  getVArgs(emu, N, va, 10), getVArgs(emu, N, va, 11), getVArgs(emu, N, va, 12), getVArgs(emu, N, va, 13), getVArgs(emu, N, va, 14), getVArgs(emu, N, va, 15), NULL);  \
     break;                                                                                                                                                                                                                  \
 case 18:                                                                                                                                                                                                                    \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], VAARGS[2], VAARGS[3], VAARGS[4], VAARGS[5], VAARGS[6], VAARGS[7], VAARGS[8], VAARGS[9],  VAARGS[10], VAARGS[11], VAARGS[12], VAARGS[13], VAARGS[14], VAARGS[15], VAARGS[16], VAARGS[17], NULL);  \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), getVArgs(emu, N, va, 2), getVArgs(emu, N, va, 3), getVArgs(emu, N, va, 4), getVArgs(emu, N, va, 5), getVArgs(emu, N, va, 6), getVArgs(emu, N, va, 7), getVArgs(emu, N, va, 8), getVArgs(emu, N, va, 9),  getVArgs(emu, N, va, 10), getVArgs(emu, N, va, 11), getVArgs(emu, N, va, 12), getVArgs(emu, N, va, 13), getVArgs(emu, N, va, 14), getVArgs(emu, N, va, 15), getVArgs(emu, N, va, 16), getVArgs(emu, N, va, 17), NULL);  \
     break;                                                                                                                                                                                                                                          \
 case 20:                                                                                                                                                                                                                                            \
-    RESULT = FUNC(FIRST_ARG, VAARGS[0], VAARGS[1], VAARGS[2], VAARGS[3], VAARGS[4], VAARGS[5], VAARGS[6], VAARGS[7], VAARGS[8], VAARGS[9],  VAARGS[10], VAARGS[11], VAARGS[12], VAARGS[13], VAARGS[14], VAARGS[15], VAARGS[16], VAARGS[17], VAARGS[18], VAARGS[19], NULL);  \
+    RESULT = FUNC(FIRST_ARG, getVArgs(emu, N, va, 0), getVArgs(emu, N, va, 1), getVArgs(emu, N, va, 2), getVArgs(emu, N, va, 3), getVArgs(emu, N, va, 4), getVArgs(emu, N, va, 5), getVArgs(emu, N, va, 6), getVArgs(emu, N, va, 7), getVArgs(emu, N, va, 8), getVArgs(emu, N, va, 9),  getVArgs(emu, N, va, 10), getVArgs(emu, N, va, 11), getVArgs(emu, N, va, 12), getVArgs(emu, N, va, 13), getVArgs(emu, N, va, 14), getVArgs(emu, N, va, 15), getVArgs(emu, N, va, 16), getVArgs(emu, N, va, 17), getVArgs(emu, N, va, 18), getVArgs(emu, N, va, 19), NULL);  \
     break;                                                                                                                                                                                                                                                                  \
 default:                                                                                                                \
     printf_log(LOG_NONE, "warning: %s's vasize (%d) is too large, need create new call case!\n", __func__, VAARGSZ);    \
     break;                                                                                                              \
 }
 
-#define GO(A)                                           \
-if (new_va[i] && strcmp((char*)new_va[i], A) == 0) {    \
-    XICCallback* origin = (XICCallback*)new_va[i+1];    \
-    new_va[i+1] = find##A##Fct(origin);                 \
+#define GO(A)                                                                       \
+if (getVArgs(emu, 1, va, i) && strcmp((char*)getVArgs(emu, 1, va, i), A) == 0) {    \
+    XICCallback* origin = (XICCallback*)getVArgs(emu, 1, va, i+1);                  \
+    setVArgs(emu, 1, va, i+1, (uintptr_t)find##A##Fct(origin));                     \
 }
 
 EXPORT void* my_XVaCreateNestedList(x64emu_t* emu, int unused, uintptr_t* va) {
     int n = 0;
     while (getVArgs(emu, 1, va, n)) n+=2 ;
-    void** new_va = box_malloc(sizeof(void*) * n);
 
     for (int i = 0; i < n; i += 2) {
-        new_va[i] = (void*)getVArgs(emu, 1, va, i);
-        new_va[i+1] = (void*)getVArgs(emu, 1, va, i+1);
         SUPER()
     }
 
     void* res = NULL;
-    VA_CALL(my->XVaCreateNestedList, unused, new_va, n, res);
-    box_free(new_va);
+    VA_CALL(my->XVaCreateNestedList, unused, 1, n, res);
     return res;
 }
 
 EXPORT void* my_XCreateIC(x64emu_t* emu, void* xim, uintptr_t* va) {
     int n = 0;
     while (getVArgs(emu, 1, va, n)) n+=2;
-    void** new_va = box_malloc(sizeof(void*) * n);
 
     for (int i = 0; i < n; i += 2) {
-        new_va[i] = (void*)getVArgs(emu, 1, va, i);
-        new_va[i+1] = (void*)getVArgs(emu, 1, va, i+1);
         SUPER()
     }
 
     void* res = NULL;
-    VA_CALL(my->XCreateIC, xim, new_va, n, res);
-    box_free(new_va);
+    VA_CALL(my->XCreateIC, xim, 1, n, res);
     return res;
 }
 
 EXPORT void* my_XSetICValues(x64emu_t* emu, void* xic, uintptr_t* va) {
     int n = 0;
     while (getVArgs(emu, 1, va, n)) n+=2;
-    void** new_va = box_malloc(sizeof(void*) * n);
 
     for (int i = 0; i < n; i += 2) {
-        new_va[i] = (void*)getVArgs(emu, 1, va, i);
-        new_va[i+1] = (void*)getVArgs(emu, 1, va, i+1);
         SUPER()
     }
 
     void* res = NULL;
-    VA_CALL(my->XSetICValues, xic, new_va, n, res);
-    box_free(new_va);
+    VA_CALL(my->XSetICValues, xic, 1, n, res);
     return res;
 }
 #undef GO
@@ -1189,23 +1162,19 @@ EXPORT void* my_XSetICValues(x64emu_t* emu, void* xic, uintptr_t* va) {
 EXPORT void* my_XSetIMValues(x64emu_t* emu, void* xim, uintptr_t* va) {
     int n = 0;
     while (getVArgs(emu, 1, va, n)) n+=2;
-    void** new_va = box_malloc(sizeof(void*) * n);
 
-    #define GO(A)                                           \
-    if (new_va[i] && strcmp((char*)new_va[i], A) == 0) {    \
-        XIMCallback* origin = (XIMCallback*)new_va[i+1];    \
-        new_va[i+1] = find##A##Fct(origin);                 \
+    #define GO(A)                                                                       \
+    if (getVArgs(emu, 1, va, i) && strcmp((char*)getVArgs(emu, 1, va, i), A) == 0) {    \
+        XIMCallback* origin = (XIMCallback*)getVArgs(emu, 1, va, i+1);                  \
+        setVArgs(emu, 1, va, i+1, (uintptr_t)find##A##Fct(origin));                     \
     }
     for (int i = 0; i < n; i += 2) {
-        new_va[i] = (void*)getVArgs(emu, 1, va, i);
-        new_va[i+1] = (void*)getVArgs(emu, 1, va, i+1);
         SUPER()
     }
     #undef GO
 
     void* res = NULL;
-    VA_CALL(my->XSetIMValues, xim, new_va, n, res)
-    box_free(new_va);
+    VA_CALL(my->XSetIMValues, xim, 1, n, res)
     return res;
 }
 #undef VA_CALL
@@ -1318,7 +1287,7 @@ EXPORT int32_t my_XInitImage(x64emu_t* emu, void* img)
     return ret;
 }
 
-EXPORT void* my_XGetImage(x64emu_t* emu, void* disp, void* drawable, int32_t x, int32_t y
+EXPORT void* my_XGetImage(x64emu_t* emu, void* disp, size_t drawable, int32_t x, int32_t y
                     , uint32_t w, uint32_t h, uint32_t plane, int32_t fmt)
 {
 
@@ -1330,7 +1299,13 @@ EXPORT void* my_XGetImage(x64emu_t* emu, void* disp, void* drawable, int32_t x, 
     return img;
 }
 
-EXPORT int32_t my_XPutImage(x64emu_t* emu, void* disp, void* drawable, void* gc, void* image
+EXPORT void my__XInitImageFuncPtrs(x64emu_t* emu, XImage* img)
+{
+    my->_XInitImageFuncPtrs(img);
+    BridgeImageFunc(emu, img);
+}
+
+EXPORT int32_t my_XPutImage(x64emu_t* emu, void* disp, size_t drawable, void* gc, void* image
                     , int32_t src_x, int32_t src_y, int32_t dst_x, int32_t dst_y
                     , uint32_t w, uint32_t h)
 {
@@ -1341,9 +1316,9 @@ EXPORT int32_t my_XPutImage(x64emu_t* emu, void* disp, void* drawable, void* gc,
     return r;
 }
 
-EXPORT void* my_XGetSubImage(x64emu_t* emu, void* disp, void* drawable
+EXPORT void* my_XGetSubImage(x64emu_t* emu, void* disp, size_t drawable
                     , int32_t x, int32_t y
-                    , uint32_t w, uint32_t h, uint32_t plane, int32_t fmt
+                    , uint32_t w, uint32_t h, size_t plane, int32_t fmt
                     , void* image, int32_t dst_x, int32_t dst_y)
 {
 
@@ -1410,7 +1385,7 @@ EXPORT int my_XUnregisterIMInstantiateCallback(x64emu_t* emu, void* d, void* db,
 EXPORT int my_XQueryExtension(x64emu_t* emu, void* display, char* name, int* major, int* first_event, int* first_error)
 {
     int ret = my->XQueryExtension(display, name, major, first_event, first_error);
-    if(!ret && name && !strcmp(name, "GLX") && box64_x11glx) {
+    if(!ret && name && !strcmp(name, "GLX") && BOX64ENV(x11glx)) {
         // hack to force GLX to be accepted, even if not present
         // left major and first_XXX to default...
         ret = 1;
@@ -1423,9 +1398,9 @@ EXPORT int my_XAddConnectionWatch(x64emu_t* emu, void* display, char* f, void* d
     return my->XAddConnectionWatch(display, findXConnectionWatchProcFct(f), data);
 }
 
-EXPORT int my_XRemoveConnectionWatch(x64emu_t* emu, void* display, char* f, void* data)
+EXPORT void my_XRemoveConnectionWatch(x64emu_t* emu, void* display, char* f, void* data)
 {
-    return my->XRemoveConnectionWatch(display, findXConnectionWatchProcFct(f), data);
+    my->XRemoveConnectionWatch(display, findXConnectionWatchProcFct(f), data);
 }
 
 EXPORT void* my_XSetAfterFunction(x64emu_t* emu, void* display, void* f)
@@ -1439,7 +1414,6 @@ EXPORT void* my_XSynchronize(x64emu_t* emu, void* display, int onoff)
     return reverse_XSynchronizeProcFct(my_lib, my->XSynchronize(display, onoff));
 }
 
-typedef unsigned long XID;
 struct my_XFreeFuncs {
     void* atoms;
     void* modifiermap;
@@ -1601,6 +1575,7 @@ EXPORT void* my_XOpenDisplay(x64emu_t* emu, void* d)
     if(!ret)
         return ret;
 
+    if(BOX64ENV(x11sync)) {my->XSynchronize(ret, 1); printf_log(LOG_INFO, "Forcing Syncronized opration on Display %p\n", ret);}
     bridge_t* system = emu->context->system;
 
     #define GO(A, W)\
@@ -1647,7 +1622,7 @@ EXPORT void* my_XOpenDisplay(x64emu_t* emu, void* d)
     return ret;
 }
 
-EXPORT void* my__XGetRequest(x64emu_t* emu, my_XDisplay_t* dpy, int type, size_t len)
+EXPORT void* my__XGetRequest(x64emu_t* emu, my_XDisplay_t* dpy, uint8_t type, size_t len)
 {
     // check if asynchandler needs updated wrapping
     struct my_XInternalAsync * p = dpy->async_handlers;
@@ -1664,13 +1639,34 @@ EXPORT void* my__XGetRequest(x64emu_t* emu, my_XDisplay_t* dpy, int type, size_t
     return my->_XGetRequest(dpy, type, len);
 }
 
-#define CUSTOM_INIT                 \
-    if(box64_x11threads) my->XInitThreads();
+EXPORT uintptr_t my_XCreateWindow(x64emu_t* emu, my_XDisplay_t* dpy, uintptr_t v2, int32_t v3, int32_t v4, uint32_t v5, uint32_t v6, uint32_t v7, int32_t v8, uint32_t v9, void* v10, uintptr_t v11, void* v12)
+{
+    dpy->resource_alloc = findResourceAllocFct(dpy->resource_alloc);
+    uintptr_t ret = my->XCreateWindow(dpy, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12);
+    return ret;
+}
 
-#ifdef ANDROID
-#define NEEDED_LIBS "libxcb.so"
-#else
+EXPORT void* my_XOpenIM(x64emu_t* emu, my_XDisplay_t* dpy, void* v2, void* v3, void* v4)
+{
+    void* ret = my->XOpenIM(dpy, v2, v3, v4);
+    bridge_t* system = emu->context->system;
+
+    #define GO(A, W)\
+    if(dpy->A)      \
+        if(!CheckBridged(system, dpy->A)) \
+            AddAutomaticBridge(system, W, dpy->A, 0, #A); \
+
+    GO(resource_alloc, LFp)
+    #undef GO
+
+    return ret;
+}
+
+#define CUSTOM_INIT                 \
+    AddAutomaticBridge(lib->w.bridge, vFp, *(void**)dlsym(lib->w.lib, "_XLockMutex_fn"), 0, "_XLockMutex_fn"); \
+    AddAutomaticBridge(lib->w.bridge, vFp, *(void**)dlsym(lib->w.lib, "_XUnlockMutex_fn"), 0, "_XUnlockMutex_fn"); \
+    if(BOX64ENV(x11threads)) my->XInitThreads();
+
 #define NEEDED_LIBS "libxcb.so.1"
-#endif
 
 #include "wrappedlib_init.h"

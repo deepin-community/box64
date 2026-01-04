@@ -10,10 +10,12 @@
 #define F64     *(uint64_t*)(addr+=8, addr-8)
 #define F64S    *(int64_t*)(addr+=8, addr-8)
 #define PK(a)   *(uint8_t*)(addr+a)
+#define PARITY(x)   (((emu->x64emu_parity_tab[(x) / 32] >> ((x) % 32)) & 1) == 0)
+
 #ifdef DYNAREC
-#define STEP if(step) return 0;
-#define STEP2 if(step) {R_RIP = addr; return 0;}
-#define STEP3 if(*step) (*step)++;
+#define STEP  if(step && !ACCESS_FLAG(F_TF)) return 0; else if((emu->old_ip>>12)!=(addr>>12)) CheckExec(emu, addr); 
+#define STEP2 if(step && !ACCESS_FLAG(F_TF)) {R_RIP = addr; return 0;} else if((emu->old_ip>>12)!=(addr>>12)) CheckExec(emu, addr); 
+#define STEP3 if(*step) (*step)++; else if((emu->old_ip>>12)!=(addr>>12)) CheckExec(emu, addr); 
 #else
 #define STEP
 #define STEP2
@@ -26,29 +28,18 @@
 #define GETE8(D)            oped=TestEd8(test, &addr, rex, nextop, D)
 #define GETET(D)            oped=TestEdt(test, &addr, rex, nextop, D)
 #define GETE8xw(D)          oped=TestEd8xw(test, rex.w, &addr, rex, nextop, D)
-#define GETED32(D)          oped=TestEd32O(test, &addr, rex, nextop, D, 0)
-#define GETED_OFFS(D, O)    oped=TestEdO(test, &addr, rex, nextop, D, O)
-#define GETED_OFFS_16(O)    oped=TestEd16off(test, &addr, rex, nextop, O)
 #define GETGD               opgd=GetGd(test->emu, &addr, rex, nextop)
 #define GETEB(D)            oped=TestEb(test, &addr, rex, nextop, D)
-#define GETEB32(D)          oped=TestEb32O(test, &addr, rex, nextop, D, 0)
-#define GETEB_OFFS(D, O)    oped=TestEbO(test, &addr, rex, nextop, D, O)
 #define GETGB               opgd=GetGb(test->emu, &addr, rex, nextop)
 #define GETEW(D)            oped=TestEw(test, &addr, rex, nextop, D)
-#define GETEW32(D)          oped=TestEw32O(test, &addr, rex, nextop, D, 0)
-#define GETEW_OFFS(D, O)    oped=TestEdO(test, &addr, rex, nextop, D, O)
-#define GETEW_OFFS_16(O)    oped=TestEw16off(test, &addr, rex, nextop, O)
 #define GETGW               opgd=GetGw(test->emu, &addr, rex, nextop)
 #define GETEX(D)            opex=TestEx(test, &addr, rex, nextop, D, 16)
 #define GETEX4(D)           opex=TestEx(test, &addr, rex, nextop, D, 4)
 #define GETEX8(D)           opex=TestEx(test, &addr, rex, nextop, D, 8)
-#define GETEX32(D)          opex=TestEx32O(test, &addr, rex, nextop, D, 0)
-#define GETEX_OFFS(D, O)    opex=TestExO(test, &addr, rex, nextop, D, O)
 #define GETGX               opgx=GetGx(test->emu, &addr, rex, nextop)
 #define GETGY               opgy=GetGy(test->emu, &addr, rex, nextop)
 #define GETEY               opey=TestEy(test, &addr, rex, nextop)
 #define GETEM(D)            opem=TestEm(test, &addr, rex, nextop, D)
-#define GETEM32(D)          opem=TestEm32O(test, &addr, rex, nextop, D, 0)
 #define GETGM               opgm=GetGm(test->emu, &addr, rex, nextop)
 #define GETVX               opvx=&test->emu->xmm[vex.v]
 #define GETVY               opvy=&test->emu->ymm[vex.v]
@@ -59,29 +50,18 @@
 #define GETE8(D)            GETED(D)
 #define GETET(D)            GETED(D)
 #define GETE8xw(D)          GETED(D)
-#define GETED32(D)          oped=GetEd32O(emu, &addr, rex, nextop, D, 0)
-#define GETED_OFFS(D, O)    oped=GetEdO(emu, &addr, rex, nextop, D, O)
-#define GETED_OFFS_16(O)    oped=GetEd16off(emu, &addr, rex, nextop, O)
 #define GETGD               opgd=GetGd(emu, &addr, rex, nextop)
 #define GETEB(D)            oped=GetEb(emu, &addr, rex, nextop, D)
-#define GETEB32(D)          oped=GetEb32O(emu, &addr, rex, nextop, D, 0)
-#define GETEB_OFFS(D, O)    oped=GetEbO(emu, &addr, rex, nextop, D, O)
 #define GETGB               opgd=GetGb(emu, &addr, rex, nextop)
 #define GETEW(D)            oped=GetEw(emu, &addr, rex, nextop, D)
-#define GETEW32(D)          oped=GetEw32O(emu, &addr, rex, nextop, D, 0)
-#define GETEW_OFFS(D, O)    oped=GetEdO(emu, &addr, rex, nextop, D, O)
-#define GETEW_OFFS_16(O)    oped=GetEw16off(emu, &addr, rex, nextop, O)
 #define GETGW               opgd=GetGw(emu, &addr, rex, nextop)
 #define GETEX(D)            opex=GetEx(emu, &addr, rex, nextop, D)
 #define GETEX4(D)           GETEX(D)
 #define GETEX8(D)           GETEX(D)
-#define GETEX32(D)          opex=GetEx32O(emu, &addr, rex, nextop, D, 0)
-#define GETEX_OFFS(D, O)    opex=GetExO(emu, &addr, rex, nextop, D, O)
 #define GETGX               opgx=GetGx(emu, &addr, rex, nextop)
 #define GETGY               opgy=GetGy(emu, &addr, rex, nextop)
 #define GETEY               opey=(opex>=&emu->xmm[0] && opex<=&emu->xmm[15])?((sse_regs_t*)((uintptr_t)opex+offsetof(x64emu_t, ymm)-offsetof(x64emu_t, xmm))):((sse_regs_t*)((uintptr_t)opex+16))
 #define GETEM(D)            opem=GetEm(emu, &addr, rex, nextop, D)
-#define GETEM32(D)          opem=GetEm32O(emu, &addr, rex, nextop, D, 0)
 #define GETGM               opgm=GetGm(emu, &addr, rex, nextop)
 #define GETVX               opvx=&emu->xmm[vex.v]
 #define GETVY               opvy=&emu->ymm[vex.v]
@@ -103,15 +83,36 @@
 #define EM  opem
 #define GM  opgm
 #define FAKEED(D)           GetEd(emu, &addr, rex, nextop, D)
-#define FAKEED32(D)         GetEd32O(emu, &addr, rex, nextop, D, 0)
 #define GETEA(D)            GetEA(emu, &addr, rex, nextop, D)
-#define GETEA32(D)          GetEA32(emu, &addr, rex, nextop, D)
 #define _GETED(D)           oped=GetEd(emu, &addr, rex, nextop, D)
-#define _GETED32(D)         oped=GetEd32O(emu, &addr, rex, nextop, D, 0)
 #define _GETEB(D)           oped=GetEb(emu, &addr, rex, nextop, D)
 #define _GETEX(D)           opex=GetEx(emu, &addr, rex, nextop, D)
 
 #define MODREG  ((nextop&0xC0)==0xC0)
+
+#if defined(__riscv)
+#define NAN_PROPAGATION(dest, src, break_or_continue) \
+    if (isnan(dest)) {                                \
+        break_or_continue;                            \
+    } else if (isnan(src)) {                          \
+        (dest) = (src);                               \
+        break_or_continue;                            \
+    }
+#else
+#define NAN_PROPAGATION(dest, src, break_or_continue)
+#endif
+
+#define MARK_NAN_VF_2(A, B) for(int idx=0; idx<4; ++idx) mask_nan[idx] = isnanf(A->f[idx]) || isnanf(B->f[idx])
+#define CHECK_NAN_VF(A) for(int idx=0; idx<4; ++idx) if(!mask_nan[idx] && isnanf(A->f[idx])) A->f[idx] = -NAN
+
+#define MARK_NAN_VD_2(A, B) for(int idx=0; idx<2; ++idx) mask_nan[idx] = isnan(A->d[idx]) || isnan(B->d[idx])
+#define CHECK_NAN_VD(A) for(int idx=0; idx<2; ++idx) if(!mask_nan[idx] && isnan(A->d[idx])) A->d[idx] = -NAN
+
+#define MARK_NAN_F_2(A, B) is_nan = isnanf(A->f[0]) || isnanf(B->f[0])
+#define CHECK_NAN_F(A) if(!is_nan && isnanf(A->f[0])) A->f[0] = -NAN
+
+#define MARK_NAN_D_2(A, B) is_nan = isnan(A->d[0]) || isnan(B->d[0])
+#define CHECK_NAN_D(A) if(!is_nan && isnan(A->d[0])) A->d[0] = -NAN
 
 #define GOCOND(BASE, PREFIX, COND, NOTCOND, POST)\
     case BASE+0x0:                              \

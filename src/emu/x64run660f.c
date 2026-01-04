@@ -5,21 +5,25 @@
 #include <math.h>
 #include <fenv.h>
 #include <string.h>
-#include <signal.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "x64_signals.h"
+#include "os.h"
 #include "debug.h"
 #include "box64stack.h"
 #include "x64emu.h"
-#include "x64run.h"
 #include "x64emu_private.h"
 #include "x64run_private.h"
 #include "x64primop.h"
 #include "x64trace.h"
 #include "x87emu_private.h"
 #include "box64context.h"
+#include "emit_signals.h"
 #include "bridge.h"
+#ifdef DYNAREC
+#include "custommem.h"
+#endif
 
 #include "modrm.h"
 #include "x64compstrings.h"
@@ -63,9 +67,8 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
     int64_t tmp64s, i64[4];
     float tmpf;
     double tmpd;
-    #ifndef NOALIGN
     int is_nan;
-    #endif
+    int mask_nan[4];
     reg64_t *oped, *opgd;
     sse_regs_t *opex, *opgx, eax1, *opex2, eax2;
     mmx87_regs_t *opem, *opgm;
@@ -134,15 +137,19 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         break;
     case 0x12:                      /* MOVLPD Gx, Eq */
         nextop = F8;
-        GETE8(0);
-        GETGX;
-        GX->q[0] = ED->q[0];
+        if(!MODREG) {
+            GETE8(0);
+            GETGX;
+            GX->q[0] = ED->q[0];
+        }
         break;
     case 0x13:                      /* MOVLPD Eq, Gx */
         nextop = F8;
-        GETE8(0);
-        GETGX;
-        ED->q[0] = GX->q[0];
+        if(!MODREG) {
+            GETE8(0);
+            GETGX;
+            ED->q[0] = GX->q[0];
+        }
         break;
     case 0x14:                      /* UNPCKLPD Gx, Ex */
         nextop = F8;
@@ -159,17 +166,28 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         break;
     case 0x16:                      /* MOVHPD Gx, Ed */
         nextop = F8;
-        GETE8(0);
-        GETGX;
-        GX->q[1] = ED->q[0];
+        if(!MODREG) {
+            GETE8(0);
+            GETGX;
+            GX->q[1] = ED->q[0];
+        }
         break;
     case 0x17:                      /* MOVHPD Ed, Gx */
         nextop = F8;
-        GETE8(0);
-        GETGX;
-        ED->q[0] = GX->q[1];
+        if(!MODREG) {
+            GETE8(0);
+            GETGX;
+            ED->q[0] = GX->q[1];
+        }
         break;
 
+    case 0x18:
+    case 0x19:
+    case 0x1A:
+    case 0x1B:
+    case 0x1C:
+    case 0x1D:
+    case 0x1E:
     case 0x1F:                      /* NOP (multi-byte) */
         nextop = F8;
         FAKEED(0);
@@ -198,10 +216,12 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         break;
     case 0x2B:                      /* MOVNTPD Ex, Gx */
         nextop = F8;
-        GETEX(0);
-        GETGX;
-        EX->q[0] = GX->q[0];
-        EX->q[1] = GX->q[1];
+        if(!MODREG) {
+            GETEX(0);
+            GETGX;
+            EX->q[0] = GX->q[0];
+            EX->q[1] = GX->q[1];
+        }
         break;
     case 0x2C:                      /* CVTTPD2PI Gm, Ex */
         nextop = F8;
@@ -541,10 +561,12 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
                 break;
             case 0x2A:  /* MOVNTDQA Gx, Ex */
                 nextop = F8;
-                GETEX(0);
-                GETGX;
-                GX->q[0] = EX->q[0];
-                GX->q[1] = EX->q[1];
+                if(!MODREG) {
+                    GETEX(0);
+                    GETGX;
+                    GX->q[0] = EX->q[0];
+                    GX->q[1] = EX->q[1];
+                }
                 break;
             case 0x2B:  /* PACKUSDW Gx, Ex */
                 nextop = F8;
@@ -698,6 +720,15 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
                 GX->ud[1] = 0;
                 break;
 
+            case 0x82:  /* INVPCID */
+                nextop = F8;
+                GETED(0);
+                // this is a privilege opcode...
+                #ifndef TEST_INTERPRETER
+                EmitSignal(emu, X64_SIGSEGV, (void*)R_RIP, 0);
+                #endif
+                break;
+
             case 0xDB:  /* AESIMC Gx, Ex */
                 nextop = F8;
                 GETEX(0);
@@ -827,7 +858,7 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
                         tmp64u2 = GD->q[0] + ED->q[0];
                         }
                     tmp64u = (tmp64u >> 32) + (GD->q[0] >> 32) + (ED->q[0] >> 32);
-                    CONDITIONAL_SET_FLAG(tmp64u & 0x100000000L, F_CF);
+                    CONDITIONAL_SET_FLAG(tmp64u & 0x100000000LL, F_CF);
                     GD->q[0] = tmp64u2;
                 } else {
                     if (ACCESS_FLAG(F_CF))
@@ -835,6 +866,7 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
                     else
                         GD->q[0] = (uint64_t)GD->dword[0] + ED->dword[0];
                     CONDITIONAL_SET_FLAG(GD->q[0] & 0x100000000LL, F_CF);
+                    GD->dword[1] = 0;
                 }
                 break;
             default:
@@ -966,7 +998,7 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
                 }
                 break;
 
-            case 0x0C:  /* PBLENDPS Gx, Ex, Ib */
+            case 0x0C: /* BLENDPS Gx, Ex, Ib */
                 nextop = F8;
                 GETEX(1);
                 GETGX;
@@ -976,7 +1008,7 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
                         GX->ud[i] = EX->ud[i];
                 }
                 break;
-            case 0x0D:  /* PBLENDPD Gx, Ex, Ib */
+            case 0x0D: /* BLENDPD Gx, Ex, Ib */
                 nextop = F8;
                 GETEX(1);
                 GETGX;
@@ -1260,12 +1292,12 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         GETEX(0);
         GETGX;
         for (int i=0; i<2; ++i) {
-            #ifndef NOALIGN
-            if(EX->d[i]<0.0)        // on x86, default nan are negative
-                GX->d[i] = -NAN;    // but input NAN are not touched (so sqrt(+nan) -> +nan)
+            if(EX->d[i]<0.0)            // on x86, default nan are negative
+                GX->d[i] = -NAN;        // but input NAN are not touched (so sqrt(+nan) -> +nan)
+            else if(isnan(EX->d[i]))
+                GX->d[i] = EX->d[i];
             else
-            #endif
-            GX->d[i] = sqrt(EX->d[i]);
+                GX->d[i] = sqrt(EX->d[i]);
         }
         break;
 
@@ -1301,29 +1333,21 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         nextop = F8;
         GETEX(0);
         GETGX;
+        MARK_NAN_VD_2(GX, EX);
         for(int i=0; i<2; ++i) {
-            #ifndef NOALIGN
-                // add generate a -NAN only if doing inf + -inf
-                if((isinf(GX->d[i]) && isinf(EX->d[i]) && (EX->q[i]&0x8000000000000000LL)!=(GX->q[i]&0x8000000000000000LL)))
-                    GX->d[i] = -NAN;
-                else
-            #endif
             GX->d[i] += EX->d[i];
         }
+        CHECK_NAN_VD(GX);
         break;
     case 0x59:                      /* MULPD Gx, Ex */
         nextop = F8;
         GETEX(0);
         GETGX;
+        MARK_NAN_VD_2(GX, EX);
         for(int i=0; i<2; ++i) {
-            #ifndef NOALIGN
-                // mul generate a -NAN only if doing (+/-)inf * (+/-)0
-                if((isinf(GX->d[i]) && EX->d[i]==0.0) || (isinf(EX->d[i]) && GX->d[i]==0.0))
-                    GX->d[i] = -NAN;
-                else
-            #endif
             GX->d[i] *= EX->d[i];
         }
+        CHECK_NAN_VD(GX);
         break;
     case 0x5A:                      /* CVTPD2PS Gx, Ex */
         nextop = F8;
@@ -1370,23 +1394,19 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         nextop = F8;
         GETEX(0);
         GETGX;
+        MARK_NAN_VD_2(GX, EX);
         for(int i=0; i<2; ++i) {
-            #ifndef NOALIGN
-                // sub generate a -NAN only if doing inf - inf
-                if((isinf(GX->d[i]) && isinf(EX->d[i]) && (EX->q[i]&0x8000000000000000LL)==(GX->q[i]&0x8000000000000000LL)))
-                    GX->d[i] = -NAN;
-                else
-            #endif
             GX->d[i] -= EX->d[i];
         }
+        CHECK_NAN_VD(GX);
         break;
     case 0x5D:                      /* MINPD Gx, Ex */
         nextop = F8;
         GETEX(0);
         GETGX;
-        if (isnan(GX->d[0]) || isnan(EX->d[0]) || isless(EX->d[0], GX->d[0]))
+        if (isnan(GX->d[0]) || isnan(EX->d[0]) || islessequal(EX->d[0], GX->d[0]))
             GX->d[0] = EX->d[0];
-        if (isnan(GX->d[1]) || isnan(EX->d[1]) || isless(EX->d[1], GX->d[1]))
+        if (isnan(GX->d[1]) || isnan(EX->d[1]) || islessequal(EX->d[1], GX->d[1]))
             GX->d[1] = EX->d[1];
         break;
     case 0x5E:                      /* DIVPD Gx, Ex */
@@ -1394,23 +1414,19 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         GETEX(0);
         GETGX;
         for (int i=0; i<2; ++i) {
-            #ifndef NOALIGN
             is_nan = isnan(GX->d[i]) || isnan(EX->d[i]);
-            #endif
             GX->d[i] /= EX->d[i];
-            #ifndef NOALIGN
             if(!is_nan && isnan(GX->d[i]))
                 GX->d[i] = -NAN;
-            #endif
         }
         break;
     case 0x5F:                      /* MAXPD Gx, Ex */
         nextop = F8;
         GETEX(0);
         GETGX;
-        if (isnan(GX->d[0]) || isnan(EX->d[0]) || isgreater(EX->d[0], GX->d[0]))
+        if (isnan(GX->d[0]) || isnan(EX->d[0]) || isgreaterequal(EX->d[0], GX->d[0]))
             GX->d[0] = EX->d[0];
-        if (isnan(GX->d[1]) || isnan(EX->d[1]) || isgreater(EX->d[1], GX->d[1]))
+        if (isnan(GX->d[1]) || isnan(EX->d[1]) || isgreaterequal(EX->d[1], GX->d[1]))
             GX->d[1] = EX->d[1];
         break;
     case 0x60:  /* PUNPCKLBW Gx,Ex */
@@ -1640,17 +1656,9 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
             case 3:                 /* PSRLDQ Ex, Ib */
                 tmp8u = F8;
                 if(tmp8u>15)
-                    {EX->q[0] = EX->q[1] = 0;}
-                else if (tmp8u!=0) {
-                    tmp8u*=8;
-                    if (tmp8u < 64) {
-                        EX->q[0] = (EX->q[0] >> tmp8u) | (EX->q[1] << (64 - tmp8u));
-                        EX->q[1] = (EX->q[1] >> tmp8u);
-                    } else {
-                        EX->q[0] = EX->q[1] >> (tmp8u - 64);
-                        EX->q[1] = 0;
-                    }
-                }
+                    EX->u128 = 0;
+                else if (tmp8u)
+                    EX->u128 >>= (tmp8u<<3);
                 break;
             case 6:                 /* PSLLQ Ex, Ib */
                 tmp8u = F8;
@@ -1662,17 +1670,9 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
             case 7:                 /* PSLLDQ Ex, Ib */
                 tmp8u = F8;
                 if(tmp8u>15)
-                    {EX->q[0] = EX->q[1] = 0;}
-                else if (tmp8u!=0) {
-                    tmp8u*=8;
-                    if (tmp8u < 64) {
-                        EX->q[1] = (EX->q[1] << tmp8u) | (EX->q[0] >> (64 - tmp8u));
-                        EX->q[0] = (EX->q[0] << tmp8u);
-                    } else {
-                        EX->q[1] = EX->q[0] << (tmp8u - 64);
-                        EX->q[0] = 0;
-                    }
-                }
+                    EX->u128 = 0;
+                else if (tmp8u)
+                    EX->u128 <<= (tmp8u<<3);
                 break;
             default:
                 return 0;
@@ -1699,55 +1699,73 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         for (int i=0; i<4; ++i)
             GX->ud[i] = (GX->ud[i]==EX->ud[i])?0xffffffff:0;
         break;
+    
+    case 0x78:  /* EXTRQ Ex, ib, ib */
+        // AMD only
+        nextop = F8;
+        if(!BOX64ENV(cputype) || (nextop&0xC0)>>3) {
+            #ifndef TEST_INTERPRETER
+            EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
+            #endif
+        } else {
+            //TODO: test /0
+            GETEX(2);
+            tmp8s = F8&0x3f;
+            tmp8u = F8&0x3f;
+            EX->q[0]>>=tmp8u;
+            EX->q[0]&=((1<<(tmp8s+1))-1);
+        }
+        break;
+    case 0x79:  /* EXTRQ Ex, Gx */
+        // AMD only
+        nextop = F8;
+        if(!BOX64ENV(cputype) || !(MODREG)) {
+            #ifndef TEST_INTERPRETER
+            EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
+            #endif
+        } else {
+            //TODO: test/r
+            GETGX;
+            GETEX(2);
+            tmp8s = EX->ub[0]&0x3f;
+            tmp8u = EX->ub[1]&0x3f;
+            GX->q[0]>>=tmp8u;
+            GX->q[0]&=((1<<(tmp8s+1))-1);
+        }
+        break;
 
     case 0x7C:  /* HADDPD Gx, Ex */
         nextop = F8;
         GETEX(0);
         GETGX;
-        #ifndef NOALIGN
         is_nan = isnan(GX->d[0]) || isnan(GX->d[1]);
-        #endif
         GX->d[0] += GX->d[1];
-        #ifndef NOALIGN
         if(!is_nan && isnan(GX->d[0]))
             GX->d[0] = -NAN;
-        #endif
         if(EX==GX) {
             GX->d[1] = GX->d[0];
         } else {
-            #ifndef NOALIGN
             is_nan = isnan(EX->d[0]) || isnan(EX->d[1]);
-            #endif
             GX->d[1] = EX->d[0] + EX->d[1];
-            #ifndef NOALIGN
             if(!is_nan && isnan(GX->d[1]))
                 GX->d[1] = -NAN;
-            #endif
         }
         break;
     case 0x7D:  /* HSUBPD Gx, Ex */
         nextop = F8;
         GETEX(0);
         GETGX;
-        #ifndef NOALIGN
         is_nan = isnan(GX->d[0]) || isnan(GX->d[1]);
-        #endif
         GX->d[0] -= GX->d[1];
-        #ifndef NOALIGN
         if(!is_nan && isnan(GX->d[0]))
             GX->d[0] = -NAN;
-        #endif
         if(EX==GX) {
             GX->d[1] = GX->d[0];
         } else {
-            #ifndef NOALIGN
             is_nan = isnan(EX->d[0]) || isnan(EX->d[1]);
-            #endif
             GX->d[1] = EX->d[0] - EX->d[1];
-            #ifndef NOALIGN
             if(!is_nan && isnan(GX->d[1]))
                 GX->d[1] = -NAN;
-            #endif
         }
         break;
     case 0x7E:                      /* MOVD Ed, Gx */
@@ -1781,7 +1799,15 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         tmp32s >>= (rex.w?6:4);
         if(!MODREG)
         {
+            #ifdef TEST_INTERPRETER
+            test->memaddr=((test->memaddr)+(tmp32s<<(rex.w?3:1)));
+            if(rex.w)
+                *(uint64_t*)test->mem = *(uint64_t*)test->memaddr;
+            else
+                *(uint16_t*)test->mem = *(uint16_t*)test->memaddr;
+            #else
             EW=(reg64_t*)(((uintptr_t)(EW))+(tmp32s<<(rex.w?3:1)));
+            #endif
         }
         if(rex.w) {
             if(EW->q[0] & (1LL<<tmp8u))
@@ -1820,7 +1846,15 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         tmp32s >>= (rex.w?6:4);
         if(!MODREG)
         {
+            #ifdef TEST_INTERPRETER
+            test->memaddr=((test->memaddr)+(tmp32s<<(rex.w?3:1)));
+            if(rex.w)
+                *(uint64_t*)test->mem = *(uint64_t*)test->memaddr;
+            else
+                *(uint16_t*)test->mem = *(uint16_t*)test->memaddr;
+            #else
             EW=(reg64_t*)(((uintptr_t)(EW))+(tmp32s<<(rex.w?3:1)));
+            #endif
         }
         if(rex.w) {
             if(EW->q[0] & (1LL<<tmp8u))
@@ -1852,7 +1886,35 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         else
             EW->word[0] = shrd16(emu, EW->word[0], GW->word[0], tmp8u);
         break;
-
+    case 0xAE:                      /* Grp Ed (SSE) */
+        nextop = F8;
+        if(MODREG)
+            switch(nextop) {
+                default:
+                    return 0;
+            }
+        else
+        switch((nextop>>3)&7) {
+            case 6:                 /* CLWB Ed */
+                // same code and CLFLUSH, is it ok?
+                _GETED(0);
+                #if defined(DYNAREC) && !defined(TEST_INTERPRETER)
+                if(BOX64ENV(dynarec))
+                    cleanDBFromAddressRange((uintptr_t)ED, 8, 0);
+                #endif
+                break;
+            case 7:                 /* CLFLUSHOPT Ed */
+                // same code and CLFLUSH, is it ok?
+                _GETED(0);
+                #if defined(DYNAREC) && !defined(TEST_INTERPRETER)
+                if(BOX64ENV(dynarec))
+                    cleanDBFromAddressRange((uintptr_t)ED, 8, 0);
+                #endif
+                break;
+            default:
+                return 0;
+        }
+        break;
     case 0xAF:                      /* IMUL Gw,Ew */
         nextop = F8;
         GETEW(0);
@@ -2034,12 +2096,20 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         nextop = F8;
         GETEW(0);
         GETGW;
-        tmp64s = rex.w?GW->sq[0]:GW->sword[0];
-        tmp8u=tmp64s&(rex.w?63:15);
-        tmp64s >>= (rex.w?6:4);
+        tmp32s = rex.w?GW->sdword[0]:GW->sword[0];
+        tmp8u=tmp32s&(rex.w?63:15);
+        tmp32s >>= (rex.w?6:4);
         if(!MODREG)
         {
-            EW=(reg64_t*)(((uintptr_t)(EW))+(tmp64s<<(rex.w?3:1)));
+            #ifdef TEST_INTERPRETER
+            test->memaddr=((test->memaddr)+(tmp32s<<(rex.w?3:1)));
+            if(rex.w)
+                *(uint64_t*)test->mem = *(uint64_t*)test->memaddr;
+            else
+                *(uint16_t*)test->mem = *(uint16_t*)test->memaddr;
+            #else
+            EW=(reg64_t*)(((uintptr_t)(EW))+(tmp32s<<(rex.w?3:1)));
+            #endif
         }
         if(rex.w) {
             if(EW->q[0] & (1LL<<tmp8u))
@@ -2060,26 +2130,34 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         nextop = F8;
         GETEW(0);
         GETGW;
+        tmp8u = 0;
         if(rex.w) {
             tmp64u = EW->q[0];
             if(tmp64u) {
                 CLEAR_FLAG(F_ZF);
-                tmp8u = 0;
                 while(!(tmp64u&(1LL<<tmp8u))) ++tmp8u;
-                GW->q[0] = tmp8u;
             } else {
                 SET_FLAG(F_ZF);
             }
+            if(tmp64u || !MODREG)
+                GW->q[0] = tmp8u;
         } else {
             tmp16u = EW->word[0];
             if(tmp16u) {
                 CLEAR_FLAG(F_ZF);
-                tmp8u = 0;
                 while(!(tmp16u&(1<<tmp8u))) ++tmp8u;
-                GW->word[0] = tmp8u;
             } else {
                 SET_FLAG(F_ZF);
             }
+            if(tmp16u || !MODREG)
+                GW->word[0] = tmp8u;
+        }
+        if(!BOX64ENV(cputype)) {
+            CONDITIONAL_SET_FLAG(PARITY(tmp8u), F_PF);
+            CLEAR_FLAG(F_CF);
+            CLEAR_FLAG(F_AF);
+            CLEAR_FLAG(F_SF);
+            CLEAR_FLAG(F_OF);
         }
         break;
     case 0xBD:                      /* BSR Ew,Gw */
@@ -2087,26 +2165,36 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         nextop = F8;
         GETEW(0);
         GETGW;
+        tmp8u = 0;
         if(rex.w) {
             tmp64u = EW->q[0];
             if(tmp64u) {
                 CLEAR_FLAG(F_ZF);
                 tmp8u = 63;
                 while(!(tmp64u&(1LL<<tmp8u))) --tmp8u;
-                GW->q[0] = tmp8u;
             } else {
                 SET_FLAG(F_ZF);
             }
+            if(tmp64u || !MODREG)
+                GW->q[0] = tmp8u;
         } else {
             tmp16u = EW->word[0];
             if(tmp16u) {
                 CLEAR_FLAG(F_ZF);
                 tmp8u = 15;
                 while(!(tmp16u&(1<<tmp8u))) --tmp8u;
-                GW->word[0] = tmp8u;
             } else {
                 SET_FLAG(F_ZF);
             }
+            if(tmp16u || !MODREG)
+                GW->word[0] = tmp8u;
+        }
+        if(!BOX64ENV(cputype)) {
+            CONDITIONAL_SET_FLAG(PARITY(tmp8u), F_PF);
+            CLEAR_FLAG(F_CF);
+            CLEAR_FLAG(F_AF);
+            CLEAR_FLAG(F_SF);
+            CLEAR_FLAG(F_OF);
         }
         break;
     case 0xBE:                      /* MOVSX Gw,Eb */
@@ -2123,9 +2211,9 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         GETEW(0);
         GETGW;
         if(rex.w)
-            GW->sq[0] = EB->sword[0];
+            GW->sq[0] = EW->sword[0];
         else
-            GW->sword[0] = EB->sword[0];
+            GW->sword[0] = EW->sword[0];
         break;
 
     case 0xC1:                      /* XADD Gw,Ew */ // Xchange and Add
@@ -2207,8 +2295,10 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         nextop = F8;
         GETEX(0);
         GETGX;
+        MARK_NAN_VD_2(GX, EX);
         GX->d[0] -= EX->d[0];
         GX->d[1] += EX->d[1];
+        CHECK_NAN_VD(GX);
         break;
     case 0xD1:  /* PSRLW Gx, Ex */
         nextop = F8;
@@ -2389,22 +2479,24 @@ uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr)
         nextop = F8;
         GETEX(0);
         GETGX;
-        if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>0x7fffffff)
-            GX->sd[0] = 0x80000000;
+        if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>(double)0x7fffffff)
+            GX->ud[0] = 0x80000000;
         else
             GX->sd[0] = EX->d[0];
-        if(isnan(EX->d[1]) || isinf(EX->d[1]) || EX->d[1]>0x7fffffff)
-            GX->sd[1] = 0x80000000;
+        if(isnan(EX->d[1]) || isinf(EX->d[1]) || EX->d[1]>(double)0x7fffffff)
+            GX->ud[1] = 0x80000000;
         else
             GX->sd[1] = EX->d[1];
         GX->q[1] = 0;
         break;
     case 0xE7:   /* MOVNTDQ Ex, Gx */
         nextop = F8;
-        GETEX(0);
-        GETGX;
-        EX->q[0] = GX->q[0];
-        EX->q[1] = GX->q[1];
+        if(!MODREG) {
+            GETEX(0);
+            GETGX;
+            EX->q[0] = GX->q[0];
+            EX->q[1] = GX->q[1];
+        }
         break;
     case 0xE8:  /* PSUBSB Gx,Ex */
         nextop = F8;

@@ -12,16 +12,13 @@
 #include "librarian/library_private.h"
 #include "x64emu.h"
 
-#ifdef ANDROID
-    const char* gstpbutilsName = "libgstpbutils-1.0.so";
-#else
-    const char* gstpbutilsName = "libgstpbutils-1.0.so.0";
-#endif
+const char* gstpbutilsName = "libgstpbutils-1.0.so.0";
+#define ALTNAME "libgstpbutils-1.0.so"
 
 #define LIBNAME gstpbutils
 
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #include "wrappedlib_init.h"

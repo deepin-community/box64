@@ -6,10 +6,10 @@
 
 #include "box64stack.h"
 #include "box64context.h"
+#include "box64cpu_util.h"
 #include "elfloader.h"
 #include "debug.h"
 #include "emu/x64emu_private.h"
-#include "emu/x64run_private.h"
 #include "auxval.h"
 #include "custommem.h"
 
@@ -22,12 +22,12 @@ int CalcStackSize(box64context_t *context)
         CalcStack(context->elfs[i], &context->stacksz, &context->stackalign);
 
     //if (posix_memalign((void**)&context->stack, context->stackalign, context->stacksz)) {
-    context->stack = internal_mmap(NULL, context->stacksz, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_GROWSDOWN, -1, 0);
+    context->stack = mmap(NULL, context->stacksz, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_GROWSDOWN, -1, 0);
     if (context->stack==(void*)-1) {
         printf_log(LOG_NONE, "Cannot allocate aligned memory (0x%lx/0x%zx) for stack\n", context->stacksz, context->stackalign);
         return 1;
     } else
-        setProtection((uintptr_t)context->stack, context->stacksz, PROT_READ|PROT_WRITE);
+        setProtection_stack((uintptr_t)context->stack, context->stacksz, PROT_READ|PROT_WRITE);
     //memset(context->stack, 0, context->stacksz);
     printf_log(LOG_DEBUG, "Stack is @%p size=0x%lx align=0x%zx\n", context->stack, context->stacksz, context->stackalign);
 
@@ -42,16 +42,27 @@ void PushString(x64emu_t *emu, const char* s)
     memcpy((void*)R_RSP, s, sz);
 }
 
+void SetupInitialStack32(x64emu_t *emu)
+#ifndef BOX32
+ { }
+#else
+ ;
+#endif
 EXPORTDYN
 void SetupInitialStack(x64emu_t *emu)
 {
+    if(box64_is32bits) {
+        SetupInitialStack32(emu);
+        return;
+    }
     // start with 0
     Push64(emu, 0);
     // push program executed
     PushString(emu, emu->context->argv[0]);
     uintptr_t p_arg0 = R_RSP;
     // push envs
-    uintptr_t p_envv[emu->context->envc];
+    uintptr_t p_envv[emu->context->envc+1];
+    p_envv[emu->context->envc] = 0;
     for (int i=emu->context->envc-1; i>=0; --i) {
         PushString(emu, emu->context->envv[i]);
         box_free(emu->context->envv[i]);

@@ -5,11 +5,9 @@
 
 #include "debug.h"
 #include "box64context.h"
-#include "dynarec.h"
+#include "box64cpu.h"
 #include "emu/x64emu_private.h"
-#include "emu/x64run_private.h"
 #include "rv64_emitter.h"
-#include "x64run.h"
 #include "x64emu.h"
 #include "box64stack.h"
 #include "callback.h"
@@ -19,13 +17,15 @@
 
 #include "rv64_printer.h"
 #include "dynarec_rv64_private.h"
-#include "dynarec_rv64_helper.h"
+#include "../dynarec_helper.h"
 #include "dynarec_rv64_functions.h"
 
 
 uintptr_t dynarec64_66F0(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ninst, rex_t rex, int rep, int* ok, int* need_epilog)
 {
-    (void)ip; (void)rep; (void)need_epilog;
+    (void)ip;
+    (void)rep;
+    (void)need_epilog;
 
     uint8_t opcode = F8;
     uint8_t nextop;
@@ -42,94 +42,83 @@ uintptr_t dynarec64_66F0(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
     MAYUSE(wb2);
     MAYUSE(j64);
 
-    while((opcode==0xF2) || (opcode==0xF3)) {
-        rep = opcode-0xF1;
+    while ((opcode == 0xF2) || (opcode == 0xF3)) {
+        rep = opcode - 0xF1;
         opcode = F8;
     }
 
     GETREX();
 
-    switch(opcode) {
-        case 0x11:
-            INST_NAME("LOCK ADC Ew, Gw");
-            READFLAGS(X_CF);
-            SETFLAGS(X_ALL, SF_SET_PENDING);
-            nextop = F8;
-            GETGW(x1);
-            SMDMB();
-            if(MODREG) {
-                ed = xRAX+(nextop&7)+(rex.b<<3);
-                MOV32w(x6, 0xFFFF);
-                AND(x2, ed, x6);
-                emit_adc16(dyn, ninst, x1, x2, x3, x4, x5);
-                if (rv64_zbb) {
-                    ANDN(ed, ed, x6);
-                } else {
-                    NOT(x6, x6);
-                    AND(ed, ed, x6);
-                }
-                OR(ed, ed, x2);
-            } else {
-                addr = geted(dyn, addr, ninst, nextop, &wback, x2, x3, &fixedaddress, rex, LOCK_LOCK, 0, 0);
-                ANDI(x3, wback, 0b10);
-                MOV32w(x4, 0xffff); // x4 = mask
-                BNEZ_MARK(x3);
-                // lower 16bits
-                MARKLOCK;
-                LR_W(x5, wback, 1, 1);
-                AND(x6, x5, x4);        // x6 = Ed.h[0]
-                SRLIW(x5, x5, 16);
-                SLLIW(x5, x5, 16);      // x5 = clear Ed.h[0]
-                ADDW(x2, x1, x6);       // x2 = Gw + Ew
-                ANDI(x9, xFlags, 1 << F_CF);
-                ADDW(x2, x2, x9);       // x2 = adc
-                AND(x2, x2, x4);
-                OR(x5, x5, x2);
-                SC_W(x2, x5, wback, 1, 1);
-                BNEZ_MARKLOCK(x2);
-                B_MARK3_nocond;
-                MARK;
-                // upper 16bits
-                SLLIW(x3, x4, 16);     // x3 = mask
-                SUBI(wback, wback, 2); // aligning address
-                SLLI(x1, x1, 16);      // x1 = extended Gw
-                MARK2;
-                LR_W(x6, wback, 1, 1); // x6 = Ed
-                AND(x5, x6, x3);       // x5 = Ed.h[1] << 16
-                ADDW(x5,x5, x1);
-                ANDI(x9, xFlags, 1 << F_CF);
-                SLLIW(x9, x9, 16);
-                ADDW(x5, x5, x9);      // x5 = adc << 16
-                AND(x9, x6, x4);       // x9 = Ed.h[0]
-                OR(x5, x5, x9);
-                SC_W(x9, x5, wback, 1, 1);
-                BNEZ_MARK2(x9);
-                IFX(X_ALL|X_PEND) {
-                    SRLIW(x6, x6, 16);
-                    SRLIW(x1, x1, 16);
-                }
-                MARK3;
-                IFX(X_ALL|X_PEND) {
-                    emit_adc16(dyn, ninst, x1, x6, x3, x4, x5);
-                }
+    switch (opcode) {
+        case 0x0F:
+            opcode = F8;
+            switch (opcode) {
+                case 0xB1:
+                    INST_NAME("LOCK CMPXCHG Ew, Gw");
+                    SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_FUSION);
+                    nextop = F8;
+                    GETGD;
+                    ZEXTH(x6, xRAX);
+                    if (MODREG) {
+                        ed = TO_NAT((nextop & 7) + (rex.b << 3));
+                        wback = 0;
+                        ZEXTH(x1, ed);
+                        BNE_MARK(x6, x1);
+                        INSH(ed, gd, x2, x3, 1, 1);
+                    } else {
+                        addr = geted(dyn, addr, ninst, nextop, &wback, x3, x2, &fixedaddress, rex, LOCK_LOCK, 0, 0);
+                        ANDI(x5, wback, 0b10);
+                        BNEZ_MARK2(x5);
+
+                        // lower 16 bits
+                        MARKLOCK;
+                        LR_W(x2, wback, 1, 1);
+                        ZEXTH(x1, x2);
+                        BNE_MARK(x6, x1);
+                        INSH(x2, gd, x5, x4, 1, 1);
+                        SC_W(x5, x2, wback, 1, 1);
+                        BNEZ_MARKLOCK(x5);
+                        B_MARK_nocond;
+
+                        MARK2;
+                        // upper 16 bits
+                        XORI(wback, wback, 0b10);
+                        MARKLOCK2;
+                        LR_W(x2, wback, 1, 1);
+                        SRLIW(x1, x2, 16);
+                        BNE_MARK(x6, x1);
+                        SLLIW(x2, x2, 16);
+                        SRLIW(x2, x2, 16);
+                        SLLIW(x5, gd, 16);
+                        OR(x2, x2, x5);
+                        SC_W(x5, x2, wback, 1, 1);
+                        BNEZ_MARKLOCK2(x5);
+                    }
+                    MARK;
+                    UFLAG_IF { emit_cmp16(dyn, ninst, x6, x1, x2, x3, x4, x5); }
+                    INSH(xRAX, x1, x2, x3, 1, 0);
+                    break;
+                default:
+                    DEFAULT;
             }
-            SMDMB();
             break;
         case 0x81:
         case 0x83:
             nextop = F8;
-            SMDMB();
-            switch((nextop>>3)&7) {
-                case 0: //ADD
-                    if(opcode==0x81) {
+            switch ((nextop >> 3) & 7) {
+                case 0: // ADD
+                    if (opcode == 0x81) {
                         INST_NAME("LOCK ADD Ew, Iw");
                     } else {
                         INST_NAME("LOCK ADD Ew, Ib");
                     }
-                    SETFLAGS(X_ALL, SF_SET_PENDING);
-                    if(MODREG) {
-                        if(opcode==0x81) u64 = F16; else u64 = (uint16_t)(int16_t)F8S;
-                        ed = xRAX+(nextop&7)+(rex.b<<3);
+                    SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_FUSION);
+                    if (MODREG) {
+                        if (opcode == 0x81)
+                            u64 = F16;
+                        else
+                            u64 = (uint16_t)(int16_t)F8S;
+                        ed = TO_NAT((nextop & 7) + (rex.b << 3));
                         MOV64x(x5, u64);
                         ZEXTH(x6, ed);
                         emit_add16(dyn, ninst, x6, x5, x3, x4, x2);
@@ -137,8 +126,11 @@ uintptr_t dynarec64_66F0(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                         SLLI(ed, ed, 16);
                         OR(ed, ed, x6);
                     } else {
-                        addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, LOCK_LOCK, 0, (opcode==0x81)?2:1);
-                        if(opcode==0x81) u64 = F16; else u64 = (uint16_t)(int16_t)F8S;
+                        addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, LOCK_LOCK, 0, (opcode == 0x81) ? 2 : 1);
+                        if (opcode == 0x81)
+                            u64 = F16;
+                        else
+                            u64 = (uint16_t)(int16_t)F8S;
                         MOV64x(x5, u64);
 
                         ANDI(x3, wback, 0b10);
@@ -155,7 +147,7 @@ uintptr_t dynarec64_66F0(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                         OR(x4, x4, x3);
                         SC_W(x3, x4, wback, 1, 1);
                         BNEZ_MARKLOCK(x3);
-                        IFX(X_ALL|X_PEND) {
+                        IFXORNAT (X_ALL | X_PEND) {
                             SLLIW(x1, x1, 16);
                             SRLIW(x1, x1, 16);
                         }
@@ -177,15 +169,146 @@ uintptr_t dynarec64_66F0(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
 
                         MARK3;
                         // final
-                        IFX(X_ALL|X_PEND) {
+                        IFXORNAT (X_ALL | X_PEND) {
                             emit_add16(dyn, ninst, x1, x5, x3, x4, x6);
+                        }
+                    }
+                    break;
+                case 1: // OR
+                    if (opcode == 0x81) {
+                        INST_NAME("LOCK OR Ew, Iw");
+                    } else {
+                        INST_NAME("LOCK OR Ew, Ib");
+                    }
+                    SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_FUSION);
+                    if (MODREG) {
+                        if (opcode == 0x81)
+                            u64 = F16;
+                        else
+                            u64 = (uint16_t)(int16_t)F8S;
+                        ed = TO_NAT((nextop & 7) + (rex.b << 3));
+                        MOV64x(x5, u64);
+                        ZEXTH(x6, ed);
+                        emit_or16(dyn, ninst, x6, x5, x3, x4);
+                        SRLI(ed, ed, 16);
+                        SLLI(ed, ed, 16);
+                        OR(ed, ed, x6);
+                    } else {
+                        addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, LOCK_LOCK, 0, (opcode == 0x81) ? 2 : 1);
+                        if (opcode == 0x81)
+                            u64 = F16;
+                        else
+                            u64 = (uint16_t)(int16_t)F8S;
+                        MOV64x(x5, u64);
+
+                        ANDI(x3, wback, 0b10);
+                        BNEZ_MARK(x3);
+
+                        // lower 16 bits
+                        MARKLOCK;
+                        LR_W(x1, wback, 1, 1);
+                        SRLIW(x3, x1, 16);
+                        SLLIW(x3, x3, 16);
+                        OR(x4, x1, x5);
+                        OR(x4, x4, x3);
+                        SC_W(x3, x4, wback, 1, 1);
+                        BNEZ_MARKLOCK(x3);
+                        IFXORNAT (X_ALL | X_PEND) {
+                            SLLIW(x1, x1, 16);
+                            SRLIW(x1, x1, 16);
+                        }
+                        B_MARK3_nocond;
+
+                        MARK;
+                        // upper 16 bits
+                        XORI(wback, wback, 0b10);
+                        MARK2;
+                        LR_W(x1, wback, 1, 1);
+                        SLLIW(x3, x1, 16);
+                        SRLIW(x3, x3, 16);
+                        SRLIW(x1, x1, 16);
+                        OR(x4, x1, x5);
+                        SLLIW(x4, x4, 16);
+                        OR(x4, x4, x3);
+                        SC_W(x3, x4, wback, 1, 1);
+                        BNEZ_MARK2(x3);
+
+                        MARK3;
+                        // final
+                        IFXORNAT (X_ALL | X_PEND) {
+                            emit_or16(dyn, ninst, x1, x5, x3, x4);
+                        }
+                    }
+                    break;
+                case 4: // AND
+                    if (opcode == 0x81) {
+                        INST_NAME("LOCK AND Ew, Iw");
+                    } else {
+                        INST_NAME("LOCK AND Ew, Ib");
+                    }
+                    SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_FUSION);
+                    if (MODREG) {
+                        if (opcode == 0x81)
+                            u64 = F16;
+                        else
+                            u64 = (uint16_t)(int16_t)F8S;
+                        ed = TO_NAT((nextop & 7) + (rex.b << 3));
+                        MOV64x(x5, u64);
+                        ZEXTH(x6, ed);
+                        emit_and16(dyn, ninst, x6, x5, x3, x4);
+                        SRLI(ed, ed, 16);
+                        SLLI(ed, ed, 16);
+                        OR(ed, ed, x6);
+                    } else {
+                        addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, LOCK_LOCK, 0, (opcode == 0x81) ? 2 : 1);
+                        if (opcode == 0x81)
+                            u64 = F16;
+                        else
+                            u64 = (uint16_t)(int16_t)F8S;
+                        MOV64x(x5, u64);
+
+                        ANDI(x3, wback, 0b10);
+                        BNEZ_MARK(x3);
+
+                        // lower 16 bits
+                        MARKLOCK;
+                        LR_W(x1, wback, 1, 1);
+                        SRLIW(x3, x1, 16);
+                        SLLIW(x3, x3, 16);
+                        AND(x4, x1, x5);
+                        OR(x4, x4, x3);
+                        SC_W(x3, x4, wback, 1, 1);
+                        BNEZ_MARKLOCK(x3);
+                        IFXORNAT (X_ALL | X_PEND) {
+                            SLLIW(x1, x1, 16);
+                            SRLIW(x1, x1, 16);
+                        }
+                        B_MARK3_nocond;
+
+                        MARK;
+                        // upper 16 bits
+                        XORI(wback, wback, 0b10);
+                        MARK2;
+                        LR_W(x1, wback, 1, 1);
+                        SLLIW(x3, x1, 16);
+                        SRLIW(x3, x3, 16);
+                        SRLIW(x1, x1, 16);
+                        AND(x4, x1, x5);
+                        SLLIW(x4, x4, 16);
+                        OR(x4, x4, x3);
+                        SC_W(x3, x4, wback, 1, 1);
+                        BNEZ_MARK2(x3);
+
+                        MARK3;
+                        // final
+                        IFXORNAT (X_ALL | X_PEND) {
+                            emit_and16(dyn, ninst, x1, x5, x3, x4);
                         }
                     }
                     break;
                 default:
                     DEFAULT;
             }
-            SMDMB();
             break;
 
         default:

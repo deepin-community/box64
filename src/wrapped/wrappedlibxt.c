@@ -17,11 +17,8 @@
 #include "box64context.h"
 #include "emu/x64emu_private.h"
 
-#ifdef ANDROID
-    const char* libxtName = "libXt.so";
-#else
-    const char* libxtName = "libXt.so.6";
-#endif
+const char* libxtName = "libXt.so.6";
+#define ALTNAME "libXt.so"
 
 #define LIBNAME libxt
 
@@ -219,10 +216,6 @@ EXPORT void my_XtAddRawEventHandler(x64emu_t* emu, void* w, uint32_t mask, int n
     my->XtAddRawEventHandler(w, mask, nonmaskable, findXtEventHandlerFct(f), data);
 }
 
-#ifdef ANDROID
-#define NEEDED_LIBS "libX11.so", "libXext.so"
-#else
 #define NEEDED_LIBS "libX11.so.6", "libXext.so.6"
-#endif
 
 #include "wrappedlib_init.h"

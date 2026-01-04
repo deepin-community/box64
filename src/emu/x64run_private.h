@@ -5,7 +5,8 @@
 #include "regs.h"
 #include "x64emu_private.h"
 #include "box64context.h"
-typedef struct x64emu_s x64emu_t;
+#include "symbolfuncs.h"
+#include "x64emu.h"
 
 typedef struct rex_s {
     union {
@@ -18,7 +19,12 @@ typedef struct rex_s {
             unsigned int s:4;
         };
     };
-    int     is32bits;
+    uint8_t     is32bits:1;
+    uint8_t     is66:1;
+    uint8_t     is67:1;
+    uint8_t     seg:3; //seg is 0-5, but 0 is CS, so will always be no-offset
+    uint8_t     rep:2; // 0 none, 1=F2 prefix, 2=F3 prefix
+    uint64_t    offset;
 } rex_t;
 
 #define VEX_P_NONE  0
@@ -37,64 +43,12 @@ typedef struct vex_s {
     uint16_t    m:5;    // opcode map
 } vex_t;
 
-static inline uint8_t Peek(x64emu_t *emu, int offset){return *(uint8_t*)(R_RIP + offset);}
-
-#ifdef TEST_INTERPRETER
-#define Push16(E, V)  do{E->regs[_SP].q[0] -=2; test->memsize = 2; *(uint16_t*)test->mem = (V); test->memaddr = E->regs[_SP].q[0];}while(0)
-#define Push32(E, V)  do{E->regs[_SP].q[0] -=4; test->memsize = 4; *(uint32_t*)test->mem = (V); test->memaddr = E->regs[_SP].q[0];}while(0)
-#define Push64(E, V)  do{E->regs[_SP].q[0] -=8; test->memsize = 8; *(uint64_t*)test->mem = (V); test->memaddr = E->regs[_SP].q[0];}while(0)
-#else
-static inline void Push16(x64emu_t *emu, uint16_t v)
-{
-    R_RSP -= 2;
-    *((uint16_t*)R_RSP) = v;
-}
-
-static inline void Push32(x64emu_t *emu, uint32_t v)
-{
-    R_RSP -= 4;
-    *((uint32_t*)R_RSP) = v;
-}
-
-static inline void Push64(x64emu_t *emu, uint64_t v)
-{
-    R_RSP -= 8;
-    *((uint64_t*)R_RSP) = v;
-}
-#endif
-
-static inline uint16_t Pop16(x64emu_t *emu)
-{
-    uint16_t* st = (uint16_t*)R_RSP;
-    R_RSP += 2;
-    return *st;
-}
-
-static inline uint32_t Pop32(x64emu_t *emu)
-{
-    uint32_t* st = (uint32_t*)R_RSP;
-    R_RSP += 4;
-    return *st;
-}
-
-static inline uint64_t Pop64(x64emu_t *emu)
-{
-    uint64_t* st = (uint64_t*)R_RSP;
-    R_RSP += 8;
-    return *st;
-}
-
-static inline void PushExit(x64emu_t* emu)
-{
-    R_RSP -= 8;
-    *((uint64_t*)R_RSP) = my_context->exit_bridge;
-}
-
 // the op code definition can be found here: http://ref.x86asm.net/geek32.html
 
 reg64_t* GetECommon(x64emu_t* emu, uintptr_t* addr, rex_t rex, uint8_t m, uint8_t delta);
 reg64_t* GetECommonO(x64emu_t* emu, uintptr_t* addr, rex_t rex, uint8_t m, uint8_t delta, uintptr_t offset);
 reg64_t* GetECommon32O(x64emu_t* emu, uintptr_t* addr, rex_t rex, uint8_t m, uint8_t delta, uintptr_t offset);
+reg64_t* GetECommon32O_16(x64emu_t* emu, uintptr_t* addr, rex_t rex, uint8_t m, uint8_t delta, uintptr_t offset);
 reg64_t* GetEb(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
 reg64_t* TestEb(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
 reg64_t* GetEbO(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta, uintptr_t offset);
@@ -102,11 +56,14 @@ reg64_t* TestEbO(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t
 reg64_t* GetEd(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
 reg64_t* TestEd(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
 reg64_t* TestEd4(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
+reg64_t* TestEd4O(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta, uintptr_t offset);
 reg64_t* TestEd8(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
+reg64_t* TestEd8O(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta, uintptr_t offset);
 reg64_t* TestEd8xw(x64test_t *test, int w, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
 reg64_t* TestEdt(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
 uintptr_t GetEA(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
 uintptr_t GetEA32(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
+uintptr_t GetEA32_16(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta);
 reg64_t* GetEdO(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta, uintptr_t offset);
 reg64_t* TestEdO(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta, uintptr_t offset);
 reg64_t* GetEd32O(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v, uint8_t delta, uintptr_t offset);
@@ -141,28 +98,17 @@ mmx87_regs_t* TestEm32O(x64test_t *test, uintptr_t* addr, rex_t rex, uint8_t v, 
 sse_regs_t* GetGx(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v);
 sse_regs_t* GetGy(x64emu_t *emu, uintptr_t* addr, rex_t rex, uint8_t v);
 
-void UpdateFlags(x64emu_t *emu);
-
 #define CHECK_FLAGS(emu) if(emu->df) UpdateFlags(emu)
 #define RESET_FLAGS(emu) emu->df = d_none
 
 uintptr_t Run0F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step);
-uintptr_t Run64(x64emu_t *emu, rex_t rex, int seg, uintptr_t addr);
-uintptr_t Run66(x64emu_t *emu, rex_t rex, int rep, uintptr_t addr);
+uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr);
 uintptr_t Run660F(x64emu_t *emu, rex_t rex, uintptr_t addr);
 uintptr_t Run66F20F(x64emu_t *emu, rex_t rex, uintptr_t addr);
 uintptr_t Run66F30F(x64emu_t *emu, rex_t rex, uintptr_t addr);
-uintptr_t Run6664(x64emu_t *emu, rex_t rex, int seg, uintptr_t addr);
 uintptr_t Run66D9(x64emu_t *emu, rex_t rex, uintptr_t addr);
 uintptr_t Run66DD(x64emu_t *emu, rex_t rex, uintptr_t addr);
 uintptr_t Run66F0(x64emu_t *emu, rex_t rex, uintptr_t addr);
-uintptr_t Run67(x64emu_t *emu, rex_t rex, int rep, uintptr_t addr);
-uintptr_t Run67AVX(x64emu_t *emu, vex_t vex, uintptr_t addr);
-uintptr_t Run67_32(x64emu_t *emu, rex_t rex, int rep, uintptr_t addr);
-uintptr_t Run6764_32(x64emu_t *emu, rex_t rex, int rep, int seg, uintptr_t addr);
-uintptr_t Run670F(x64emu_t *emu, rex_t rex, int rep, uintptr_t addr);
-uintptr_t Run6766(x64emu_t *emu, rex_t rex, int rep, uintptr_t addr);
-uintptr_t Run67660F(x64emu_t *emu, rex_t rex, uintptr_t addr);
 uintptr_t RunD8(x64emu_t *emu, rex_t rex, uintptr_t addr);
 uintptr_t RunD9(x64emu_t *emu, rex_t rex, uintptr_t addr);
 uintptr_t RunDA(x64emu_t *emu, rex_t rex, uintptr_t addr);
@@ -188,22 +134,13 @@ uintptr_t RunAVX_F30F38(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step);
 uintptr_t RunAVX_F30F3A(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step);
 
 uintptr_t Test0F(x64test_t *test, rex_t rex, uintptr_t addr, int *step);
-uintptr_t Test64(x64test_t *test, rex_t rex, int seg, uintptr_t addr);
-uintptr_t Test66(x64test_t *test, rex_t rex, int rep, uintptr_t addr);
+uintptr_t Test66(x64test_t *test, rex_t rex, uintptr_t addr);
 uintptr_t Test660F(x64test_t *test, rex_t rex, uintptr_t addr);
 uintptr_t Test66F20F(x64test_t *test, rex_t rex, uintptr_t addr);
 uintptr_t Test66F30F(x64test_t *test, rex_t rex, uintptr_t addr);
-uintptr_t Test6664(x64test_t *test, rex_t rex, int seg, uintptr_t addr);
 uintptr_t Test66D9(x64test_t *test, rex_t rex, uintptr_t addr);
 uintptr_t Test66DD(x64test_t *test, rex_t rex, uintptr_t addr);
 uintptr_t Test66F0(x64test_t *test, rex_t rex, uintptr_t addr);
-uintptr_t Test67(x64test_t *test, rex_t rex, int rep, uintptr_t addr);
-uintptr_t Test67AVX(x64test_t *test, vex_t vex, uintptr_t addr);
-uintptr_t Test67_32(x64test_t *test, rex_t rex, int rep, uintptr_t addr);
-uintptr_t Test6764_32(x64test_t *test, rex_t rex, int rep, int seg, uintptr_t addr);
-uintptr_t Test670F(x64test_t *test, rex_t rex, int rep, uintptr_t addr);
-uintptr_t Test6766(x64test_t *test, rex_t rex, int rep, uintptr_t addr);
-uintptr_t Test67660F(x64test_t *test, rex_t rex, uintptr_t addr);
 uintptr_t TestD8(x64test_t *test, rex_t rex, uintptr_t addr);
 uintptr_t TestD9(x64test_t *test, rex_t rex, uintptr_t addr);
 uintptr_t TestDA(x64test_t *test, rex_t rex, uintptr_t addr);
@@ -227,19 +164,6 @@ uintptr_t TestAVX_F20F38(x64test_t *test, vex_t vex, uintptr_t addr, int *step);
 uintptr_t TestAVX_F20F3A(x64test_t *test, vex_t vex, uintptr_t addr, int *step);
 uintptr_t TestAVX_F30F38(x64test_t *test, vex_t vex, uintptr_t addr, int *step);
 uintptr_t TestAVX_F30F3A(x64test_t *test, vex_t vex, uintptr_t addr, int *step);
-
-void x64Syscall(x64emu_t *emu);
-void x64Int3(x64emu_t* emu, uintptr_t* addr);
-x64emu_t* x64emu_fork(x64emu_t* e, int forktype);
-void x86Syscall(x64emu_t *emu); //32bits syscall
-
-uintptr_t GetSegmentBaseEmu(x64emu_t* emu, int seg);
-#define GetGSBaseEmu(emu)    GetSegmentBaseEmu(emu, _GS)
-#define GetFSBaseEmu(emu)    GetSegmentBaseEmu(emu, _FS)
-#define GetESBaseEmu(emu)    GetSegmentBaseEmu(emu, _ES)
-#define GetDSBaseEmu(emu)    GetSegmentBaseEmu(emu, _DS)
-
-const char* GetNativeName(void* p);
 
 #ifdef HAVE_TRACE
 void PrintTrace(x64emu_t* emu, uintptr_t ip, int dynarec);

@@ -45,7 +45,6 @@ int CalcLoadAddr(elfheader_t* head);
 int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin);
 void FreeElfMemory(elfheader_t* head);
 int isElfHasNeededVer(elfheader_t* head, const char* libname, elfheader_t* verneeded);
-void GrabX64CopyMainElfReloc(elfheader_t* head);
 int RelocateElf(lib_t *maplib, lib_t* local_maplib, int bindnow, int deepbind, elfheader_t* head);
 int RelocateElfPlt(lib_t *maplib, lib_t* local_maplib, int bindnow, int deepbind, elfheader_t* head);
 void CalcStack(elfheader_t* h, uint64_t* stacksz, size_t* stackalign);
@@ -70,9 +69,6 @@ int32_t GetTLSBase(elfheader_t* h);
 uint32_t GetTLSSize(elfheader_t* h);
 void* GetTLSPointer(box64context_t* context, elfheader_t* h);
 void* GetDTatOffset(box64context_t* context, unsigned long int index, unsigned long int offset);
-#ifdef DYNAREC
-dynablock_t* GetDynablocksFromAddress(box64context_t *context, uintptr_t addr);
-#endif
 void ResetSpecialCaseMainElf(elfheader_t* h);
 void CreateMemorymapFile(box64context_t* context, int fd);
 void* GetDynamicSection(elfheader_t* h);
@@ -91,10 +87,18 @@ int GetNeededVersionForLib(elfheader_t* h, const char* libname, const char* ver)
 void* ElfGetLocalSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *sz, const char* symname, int* ver, const char** vername, int local, int* veropt);
 void* ElfGetGlobalSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *sz, const char* symname, int* ver, const char** vername, int local, int* veropt);
 void* ElfGetWeakSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *sz, const char* symname, int* ver, const char** vername, int local, int* veropt);
+void* ElfGetSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt);
 int ElfGetSymTabStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname);
+int ElfGetSymTabStartEnd32(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname);
+int ElfGetSymTabStartEnd64(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname);
 
 void* GetNativeSymbolUnversioned(void* lib, const char* name);
 
 void AddMainElfToLinkmap(elfheader_t* lib);
+
+void PltResolver32(x64emu_t* emu);
+void PltResolver64(x64emu_t* emu);
+
+const char* getAddrFunctionName(uintptr_t addr);
 
 #endif //__ELF_LOADER_H_

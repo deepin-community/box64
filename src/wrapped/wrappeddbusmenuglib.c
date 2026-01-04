@@ -18,11 +18,8 @@
 #include "emu/x64emu_private.h"
 #include "callback.h"
 
-#ifdef ANDROID
-    const char* dbusmenuglibName = "libdbusmenu-glib.so";
-#else
-    const char* dbusmenuglibName = "libdbusmenu-glib.so.4";
-#endif
+const char* dbusmenuglibName = "libdbusmenu-glib.so.4";
+#define ALTNAME "libdbusmenu-glib.so"
 
 #define LIBNAME dbusmenuglib
 
@@ -103,7 +100,7 @@ EXPORT void my_dbusmenu_menuitem_send_about_to_show(x64emu_t* emu, void* mi, voi
 }
 
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #include "wrappedlib_init.h"

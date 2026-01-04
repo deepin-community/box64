@@ -5,14 +5,14 @@
 #include <math.h>
 #include <fenv.h>
 #include <string.h>
-#include <signal.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "x64_signals.h"
+#include "os.h"
 #include "debug.h"
 #include "box64stack.h"
 #include "x64emu.h"
-#include "x64run.h"
 #include "x64emu_private.h"
 #include "x64run_private.h"
 #include "x64primop.h"
@@ -20,6 +20,7 @@
 #include "x87emu_private.h"
 #include "box64context.h"
 #include "bridge.h"
+#include "emit_signals.h"
 
 #include "modrm.h"
 
@@ -35,12 +36,12 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
     uint8_t tmp8u;
     int32_t tmp32s;
     int64_t tmp64s0, tmp64s1;
+    uint64_t tmp64u;
     reg64_t *oped, *opgd;
     sse_regs_t *opex, *opgx, eax1;
     mmx87_regs_t *opgm;
-    #ifndef NOALIGN
+    int mask_nan[4];
     int is_nan;
-    #endif
     #ifdef TEST_INTERPRETER
     x64emu_t*emu = test->emu;
     #endif
@@ -87,18 +88,25 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
             GX->d[0] = ED->sdword[0];
         }
         break;
-
+    case 0x2B:  /* MOVNTSD Ex, Gx */
+        nextop = F8;
+        if(!MODREG) {
+            GETEX8(0);
+            GETGX;
+            EX->q[0] = GX->q[0];
+        }
+        break;
     case 0x2C:  /* CVTTSD2SI Gd, Ex */
         nextop = F8;
         _GETEX(0);
         GETGD;
         if(rex.w)
-            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>0x7fffffffffffffffLL)
+            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>=(double)0x7fffffffffffffffLL)
                 GD->q[0] = 0x8000000000000000LL;
             else
                 GD->sq[0] = EX->d[0];
         else {
-            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>0x7fffffff)
+            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>(double)0x7fffffff)
                 GD->dword[0] = 0x80000000;
             else
                 GD->sdword[0] = EX->d[0];
@@ -110,7 +118,7 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         _GETEX(0);
         GETGD;
         if(rex.w) {
-            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>0x7fffffffffffffffLL)
+            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>=(double)0x7fffffffffffffffLL)
                 GD->q[0] = 0x8000000000000000LL;
             else
                 switch(emu->mxcsr.f.MXCSR_RC) {
@@ -132,7 +140,7 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
                         break;
                 }
         } else {
-            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>0x7fffffff)
+            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>(double)0x7fffffff)
                 GD->dword[0] = 0x80000000;
             else
                 switch(emu->mxcsr.f.MXCSR_RC) {
@@ -201,6 +209,8 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         GETGX;
         if(EX->d[0]<0.0 )
             GX->d[0] = -NAN;
+        else if(isnan(EX->d[0]))
+            GX->d[0] = EX->d[0];
         else
             GX->d[0] = sqrt(EX->d[0]);
         break;
@@ -209,25 +219,24 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         nextop = F8;
         _GETEX(0);
         GETGX;
-        #ifndef NOALIGN
-        // add generate a -NAN only if doing inf + -inf
-        if((isinf(GX->d[0]) && isinf(EX->d[0]) && (EX->q[0]&0x8000000000000000LL)!=(GX->q[0]&0x8000000000000000LL)))
-            GX->d[0] = -NAN;
-        else
-        #endif
-        GX->d[0] += EX->d[0];
+        MARK_NAN_D_2(GX, EX);
+        {
+            NAN_PROPAGATION(GX->d[0], EX->d[0], break);
+            GX->d[0] += EX->d[0];
+        }
+        CHECK_NAN_D(GX);
         break;
     case 0x59:  /* MULSD Gx, Ex */
         nextop = F8;
         _GETEX(0);
         GETGX;
-        #ifndef NOALIGN
-            // mul generate a -NAN only if doing (+/-)inf * (+/-)0
-            if((isinf(GX->d[0]) && EX->d[0]==0.0) || (isinf(EX->d[0]) && GX->d[0]==0.0))
-                GX->d[0] = -NAN;
-            else
-        #endif
-        GX->d[0] *= EX->d[0];
+        // mul generate a -NAN only if doing (+/-)inf * (+/-)0
+        MARK_NAN_D_2(GX, EX);
+        {
+            NAN_PROPAGATION(GX->d[0], EX->d[0], break);
+            GX->d[0] *= EX->d[0];
+        }
+        CHECK_NAN_D(GX);
         break;
     case 0x5A:  /* CVTSD2SS Gx, Ex */
         nextop = F8;
@@ -240,43 +249,34 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         nextop = F8;
         _GETEX(0);
         GETGX;
-        #ifndef NOALIGN
-            // sub generate a -NAN only if doing inf - inf
-            if((isinf(GX->d[0]) && isinf(EX->d[0]) && (EX->q[0]&0x8000000000000000LL)==(GX->q[0]&0x8000000000000000LL)))
-                GX->d[0] = -NAN;
-            else
-        #endif
-        GX->d[0] -= EX->d[0];
+        MARK_NAN_D_2(GX, EX);
+        {
+            NAN_PROPAGATION(GX->d[0], EX->d[0], break);
+            GX->d[0] -= EX->d[0];
+        }
+        CHECK_NAN_D(GX);
         break;
     case 0x5D:  /* MINSD Gx, Ex */
         nextop = F8;
         _GETEX(0);
         GETGX;
-        if (GX->d[0] == 0.0 && EX->d[0]  == 0.0)
-            GX->d[0] = EX->d[0];
-        if (isnan(GX->d[0]) || isnan(EX->d[0]) || isless(EX->d[0], GX->d[0]))
+        if (isnan(GX->d[0]) || isnan(EX->d[0]) || islessequal(EX->d[0], GX->d[0]))
             GX->d[0] = EX->d[0];
         break;
     case 0x5E:  /* DIVSD Gx, Ex */
         nextop = F8;
         _GETEX(0);
         GETGX;
-        #ifndef NOALIGN
-        is_nan = isnan(GX->d[0]) || isnan(EX->d[0]);
-        #endif
+        MARK_NAN_D_2(GX, EX);
+        NAN_PROPAGATION(GX->d[0], EX->d[0], break);
         GX->d[0] /= EX->d[0];
-        #ifndef NOALIGN
-        if(!is_nan && isnan(GX->d[0]))
-            GX->d[0] = -NAN;
-        #endif
+        CHECK_NAN_D(GX);
         break;
     case 0x5F:  /* MAXSD Gx, Ex */
         nextop = F8;
         _GETEX(0);
         GETGX;
-        if (GX->d[0] == 0.0 && EX->d[0]  == 0.0)
-            GX->d[0] = EX->d[0];
-        if (isnan(GX->d[0]) || isnan(EX->d[0]) || isgreater(EX->d[0], GX->d[0]))
+        if (isnan(GX->d[0]) || isnan(EX->d[0]) || isgreaterequal(EX->d[0], GX->d[0]))
             GX->d[0] = EX->d[0];
         break;
 
@@ -296,33 +296,82 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         }
         break;
 
+    case 0x78:  /* INSERTQ Gx, Ex, ib, ib */
+        // AMD only
+        nextop = F8;
+        if(!BOX64ENV(cputype) || !(MODREG)) {
+            #ifndef TEST_INTERPRETER
+            EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
+            #endif
+        } else {
+            //TODO: test /r
+            GETGX;
+            GETEX(2);
+            tmp8s = F8&0x3f;
+            tmp8u = F8&0x3f;
+            tmp64u = (1<<(tmp8s+1))-1;
+            GX->q[0] &=~(tmp64u<<tmp8u);
+            GX->q[0] |= (EX->q[0]&tmp64u)<<tmp8u;
+        }
+        break;
+    case 0x79:  /* INSERTQ Gx, Ex */
+        // AMD only
+        nextop = F8;
+        if(!BOX64ENV(cputype) || !(MODREG)) {
+            #ifndef TEST_INTERPRETER
+            EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
+            #endif
+        } else {
+            //TODO: test /r
+            GETGX;
+            GETEX(2);
+            tmp8u = EX->ub[8]&0x3f;
+            tmp8s = EX->ub[9]&0x3f;
+            tmp64u = (1<<(tmp8s+1))-1;
+            GX->q[0] &=~(tmp64u<<tmp8u);
+            GX->q[0] |= (EX->q[0]&tmp64u)<<tmp8u;
+        }
+        break;
+
     case 0x7C:  /* HADDPS Gx, Ex */
         nextop = F8;
         _GETEX(0);
         GETGX;
+        mask_nan[0] = isnanf(GX->f[0]) || isnanf(GX->f[1]);
+        mask_nan[1] = isnanf(GX->f[2]) || isnanf(GX->f[3]);
         GX->f[0] += GX->f[1];
         GX->f[1] = GX->f[2] + GX->f[3];
         if(EX==GX) {
-            GX->f[2] = GX->f[0];
-            GX->f[3] = GX->f[1];
+            GX->q[1] = GX->q[0];
+            mask_nan[2] = mask_nan[0];
+            mask_nan[3] = mask_nan[1];
         } else {
+            mask_nan[2] = isnanf(EX->f[0]) || isnanf(EX->f[1]);
+            mask_nan[3] = isnanf(EX->f[2]) || isnanf(EX->f[3]);
             GX->f[2] = EX->f[0] + EX->f[1];
             GX->f[3] = EX->f[2] + EX->f[3];
         }
+        CHECK_NAN_VF(GX);
         break;
     case 0x7D:  /* HSUBPS Gx, Ex */
         nextop = F8;
         _GETEX(0);
         GETGX;
+        mask_nan[0] = isnanf(GX->f[0]) || isnanf(GX->f[1]);
+        mask_nan[1] = isnanf(GX->f[2]) || isnanf(GX->f[3]);
         GX->f[0] -= GX->f[1];
         GX->f[1] = GX->f[2] - GX->f[3];
         if(EX==GX) {
-            GX->f[2] = GX->f[0];
-            GX->f[3] = GX->f[1];
+            GX->q[1] = GX->q[0];
+            mask_nan[2] = mask_nan[0];
+            mask_nan[3] = mask_nan[1];
         } else {
+            mask_nan[2] = isnanf(EX->f[0]) || isnanf(EX->f[1]);
+            mask_nan[3] = isnanf(EX->f[2]) || isnanf(EX->f[3]);
             GX->f[2] = EX->f[0] - EX->f[1];
             GX->f[3] = EX->f[2] - EX->f[3];
         }
+        CHECK_NAN_VF(GX);
         break;
 
     GOCOND(0x80
@@ -330,7 +379,15 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         , addr += tmp32s;
         ,,STEP3
     )                               /* 0x80 -> 0x8F Jxx */
-        
+
+    case 0xA5:  // ignore F2 prefix
+    case 0xBA:
+        #ifdef TEST_INTERPRETER 
+        return Test0F(test, rex, addr-1, step);
+        #else
+        return Run0F(emu, rex, addr-1, step);
+        #endif
+
     case 0xC2:  /* CMPSD Gx, Ex, Ib */
         nextop = F8;
         _GETEX(1);
@@ -354,10 +411,12 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         nextop = F8;
         _GETEX(0);
         GETGX;
+        MARK_NAN_VF_2(GX, EX);
         GX->f[0] -= EX->f[0];
         GX->f[1] += EX->f[1];
         GX->f[2] -= EX->f[2];
         GX->f[3] += EX->f[3];
+        CHECK_NAN_VF(GX);
         break;
 
     case 0xD6:  /* MOVDQ2Q Gm, Ex */

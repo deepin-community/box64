@@ -14,6 +14,7 @@
 #include <dlfcn.h>
 #endif
 
+#include "os.h"
 #include "custommem.h"
 #include "box64version.h"
 #include "elfloader.h"
@@ -21,18 +22,21 @@
 #include "elfload_dump.h"
 #include "elfloader_private.h"
 #include "librarian.h"
-#include "x64run.h"
 #include "bridge.h"
+#include "alternate.h"
 #include "wrapper.h"
 #include "box64context.h"
 #include "library.h"
 #include "x64emu.h"
+#include "box64cpu.h"
+#include "box64cpu_util.h"
 #include "box64stack.h"
 #include "callback.h"
 #include "box64stack.h"
 #include "wine_tools.h"
 #include "dictionnary.h"
 #include "symbols.h"
+#include "cleanup.h"
 #ifdef DYNAREC
 #include "dynablock.h"
 #endif
@@ -41,12 +45,14 @@
 #include "../tools/bridge_private.h"
 #include "x64tls.h"
 
-void* my__IO_2_1_stderr_ = NULL;
-void* my__IO_2_1_stdin_  = NULL;
-void* my__IO_2_1_stdout_ = NULL;
+void* my__IO_2_1_stderr_ = (void*)1;
+void* my__IO_2_1_stdin_  = (void*)2;
+void* my__IO_2_1_stdout_ = (void*)3;
+
+uintptr_t pltResolver64 = ~0LL;
 
 // return the index of header (-1 if it doesn't exist)
-int getElfIndex(box64context_t* ctx, elfheader_t* head) {
+static int getElfIndex(box64context_t* ctx, elfheader_t* head) {
     for (int i=0; i<ctx->elfsize; ++i)
         if(ctx->elfs[i]==head)
             return i;
@@ -55,7 +61,7 @@ int getElfIndex(box64context_t* ctx, elfheader_t* head) {
 
 elfheader_t* LoadAndCheckElfHeader(FILE* f, const char* name, int exec)
 {
-    elfheader_t *h = ParseElfHeader(f, name, exec);
+    elfheader_t *h = box64_is32bits?ParseElfHeader32(f, name, exec):ParseElfHeader64(f, name, exec);
     if(!h)
         return NULL;
 
@@ -63,12 +69,12 @@ elfheader_t* LoadAndCheckElfHeader(FILE* f, const char* name, int exec)
         h->path = (char*)box_malloc(1);
         h->path[0] = '\0';
     }
-    
+
     h->refcnt = 0;
 
     h->file = f;
     h->fileno = fileno(f);
-    
+
     return h;
 }
 
@@ -80,22 +86,22 @@ void FreeElfHeader(elfheader_t** head)
     if(my_context)
         RemoveElfHeader(my_context, h);
 
-    box_free(h->PHEntries);
-    box_free(h->SHEntries);
-    box_free(h->SHStrTab);
-    box_free(h->StrTab);
-    box_free(h->Dynamic);
-    box_free(h->DynStr);
-    box_free(h->SymTab);
-    box_free(h->DynSym);
+    actual_free(h->PHEntries._64); //_64 or _32 doesn't mater for free, it's the same address
+    actual_free(h->SHEntries._64);
+    actual_free(h->SHStrTab);
+    actual_free(h->StrTab);
+    actual_free(h->Dynamic._64);
+    actual_free(h->DynStr);
+    actual_free(h->SymTab._64);
+    actual_free(h->DynSym._64);
 
     FreeElfMemory(h);
 
-    box_free(h->name);
-    box_free(h->path);
+    actual_free(h->name);
+    actual_free(h->path);
     if(h->file)
         fclose(h->file);
-    box_free(h);
+    actual_free(h);
 
     *head = NULL;
 }
@@ -105,14 +111,24 @@ int CalcLoadAddr(elfheader_t* head)
     head->memsz = 0;
     head->paddr = head->vaddr = ~(uintptr_t)0;
     head->align = box64_pagesize;
-    for (size_t i=0; i<head->numPHEntries; ++i)
-        if(head->PHEntries[i].p_type == PT_LOAD) {
-            if(head->paddr > (uintptr_t)head->PHEntries[i].p_paddr)
-                head->paddr = (uintptr_t)head->PHEntries[i].p_paddr;
-            if(head->vaddr > (uintptr_t)head->PHEntries[i].p_vaddr)
-                head->vaddr = (uintptr_t)head->PHEntries[i].p_vaddr;
-        }
-    
+    if(box64_is32bits) {
+        for (size_t i=0; i<head->numPHEntries; ++i)
+            if(head->PHEntries._32[i].p_type == PT_LOAD) {
+                if(head->paddr > (uintptr_t)head->PHEntries._32[i].p_paddr)
+                    head->paddr = (uintptr_t)head->PHEntries._32[i].p_paddr;
+                if(head->vaddr > (uintptr_t)head->PHEntries._32[i].p_vaddr)
+                    head->vaddr = (uintptr_t)head->PHEntries._32[i].p_vaddr;
+            }
+    } else {
+        for (size_t i=0; i<head->numPHEntries; ++i)
+            if(head->PHEntries._64[i].p_type == PT_LOAD) {
+                if(head->paddr > (uintptr_t)head->PHEntries._64[i].p_paddr)
+                    head->paddr = (uintptr_t)head->PHEntries._64[i].p_paddr;
+                if(head->vaddr > (uintptr_t)head->PHEntries._64[i].p_vaddr)
+                    head->vaddr = (uintptr_t)head->PHEntries._64[i].p_vaddr;
+            }
+    }
+
     if(head->vaddr==~(uintptr_t)0 || head->paddr==~(uintptr_t)0) {
         printf_log(LOG_NONE, "Error: v/p Addr for Elf Load not set\n");
         return 1;
@@ -120,31 +136,58 @@ int CalcLoadAddr(elfheader_t* head)
 
     head->stacksz = 1024*1024;          //1M stack size default?
     head->stackalign = 16;   // default align for stack
-    for (size_t i=0; i<head->numPHEntries; ++i) {
-        if(head->PHEntries[i].p_type == PT_LOAD) {
-            uintptr_t phend = head->PHEntries[i].p_vaddr - head->vaddr + head->PHEntries[i].p_memsz;
-            if(phend > head->memsz)
-                head->memsz = phend;
-            if(head->PHEntries[i].p_align > head->align)
-                head->align = head->PHEntries[i].p_align;
+    if(box64_is32bits)
+        for (size_t i=0; i<head->numPHEntries; ++i) {
+            if(head->PHEntries._32[i].p_type == PT_LOAD) {
+                uintptr_t phend = head->PHEntries._32[i].p_vaddr - head->vaddr + head->PHEntries._32[i].p_memsz;
+                if(phend > head->memsz)
+                    head->memsz = phend;
+                if(head->PHEntries._32[i].p_align > head->align)
+                    head->align = head->PHEntries._32[i].p_align;
+            }
+            if(head->PHEntries._32[i].p_type == PT_GNU_STACK) {
+                if(head->stacksz < head->PHEntries._32[i].p_memsz)
+                    head->stacksz = head->PHEntries._32[i].p_memsz;
+                if(head->stackalign < head->PHEntries._32[i].p_align)
+                    head->stackalign = head->PHEntries._32[i].p_align;
+            }
+            if(head->PHEntries._32[i].p_type == PT_TLS) {
+                head->tlsaddr = head->PHEntries._32[i].p_vaddr;
+                head->tlssize = head->PHEntries._32[i].p_memsz;
+                head->tlsfilesize = head->PHEntries._32[i].p_filesz;
+                head->tlsalign = head->PHEntries._32[i].p_align;
+                // force alignement...
+                if(head->tlsalign>1)
+                    while(head->tlssize&(head->tlsalign-1))
+                        head->tlssize++;
+            }
         }
-        if(head->PHEntries[i].p_type == PT_GNU_STACK) {
-            if(head->stacksz < head->PHEntries[i].p_memsz)
-                head->stacksz = head->PHEntries[i].p_memsz;
-            if(head->stackalign < head->PHEntries[i].p_align)
-                head->stackalign = head->PHEntries[i].p_align;
+    else
+        for (size_t i=0; i<head->numPHEntries; ++i) {
+            if(head->PHEntries._64[i].p_type == PT_LOAD) {
+                uintptr_t phend = head->PHEntries._64[i].p_vaddr - head->vaddr + head->PHEntries._64[i].p_memsz;
+                if(phend > head->memsz)
+                    head->memsz = phend;
+                if(head->PHEntries._64[i].p_align > head->align)
+                    head->align = head->PHEntries._64[i].p_align;
+            }
+            if(head->PHEntries._64[i].p_type == PT_GNU_STACK) {
+                if(head->stacksz < head->PHEntries._64[i].p_memsz)
+                    head->stacksz = head->PHEntries._64[i].p_memsz;
+                if(head->stackalign < head->PHEntries._64[i].p_align)
+                    head->stackalign = head->PHEntries._64[i].p_align;
+            }
+            if(head->PHEntries._64[i].p_type == PT_TLS) {
+                head->tlsaddr = head->PHEntries._64[i].p_vaddr;
+                head->tlssize = head->PHEntries._64[i].p_memsz;
+                head->tlsfilesize = head->PHEntries._64[i].p_filesz;
+                head->tlsalign = head->PHEntries._64[i].p_align;
+                // force alignement...
+                if(head->tlsalign>1)
+                    while(head->tlssize&(head->tlsalign-1))
+                        head->tlssize++;
+            }
         }
-        if(head->PHEntries[i].p_type == PT_TLS) {
-            head->tlsaddr = head->PHEntries[i].p_vaddr;
-            head->tlssize = head->PHEntries[i].p_memsz;
-            head->tlsfilesize = head->PHEntries[i].p_filesz;
-            head->tlsalign = head->PHEntries[i].p_align;
-            // force alignement...
-            if(head->tlsalign>1)
-                while(head->tlssize&(head->tlsalign-1))
-                    head->tlssize++;
-        }
-    }
     printf_log(LOG_DEBUG, "Elf Addr(v/p)=%p/%p Memsize=0x%zx (align=0x%zx)\n", (void*)head->vaddr, (void*)head->paddr, head->memsz, head->align);
     printf_log(LOG_DEBUG, "Elf Stack Memsize=%zu (align=%zu)\n", head->stacksz, head->stackalign);
     printf_log(LOG_DEBUG, "Elf TLS Memsize=%zu (align=%zu)\n", head->tlssize, head->tlsalign);
@@ -165,23 +208,31 @@ const char* ElfPath(elfheader_t* head)
     return head->path;
 }
 
+int AllocLoadElfMemory32(box64context_t* context, elfheader_t* head, int mainbin)
+#ifndef BOX32
+{ return 1; }
+#else
+ ;
+#endif
 int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
 {
+    if(box64_is32bits)
+        return AllocLoadElfMemory32(context, head, mainbin);
     uintptr_t offs = 0;
     loadProtectionFromMap();
-    int log_level = box64_load_addr?LOG_INFO:LOG_DEBUG;
+    int log_level = BOX64ENV(load_addr)?LOG_INFO:LOG_DEBUG;
 
     head->multiblock_n = 0; // count PHEntrie with LOAD
     uintptr_t max_align = head->align-1;
-    for (size_t i=0; i<head->numPHEntries; ++i) 
-        if(head->PHEntries[i].p_type == PT_LOAD && head->PHEntries[i].p_flags) {
+    for (size_t i=0; i<head->numPHEntries; ++i)
+        if(head->PHEntries._64[i].p_type == PT_LOAD && head->PHEntries._64[i].p_flags) {
             ++head->multiblock_n;
         }
 
-    if(!head->vaddr && box64_load_addr) {
-        offs = (uintptr_t)find47bitBlockNearHint((void*)((box64_load_addr+max_align)&~max_align), head->memsz+head->align, max_align);
-        box64_load_addr = offs + head->memsz;
-        box64_load_addr = (box64_load_addr+0x10ffffffLL)&~0xffffffLL;
+    if(!head->vaddr && BOX64ENV(load_addr)) {
+        offs = (uintptr_t)find47bitBlockNearHint((void*)((BOX64ENV(load_addr)+max_align)&~max_align), head->memsz+head->align, max_align);
+        BOX64ENV(load_addr) = offs + head->memsz;
+        BOX64ENV(load_addr) = (BOX64ENV(load_addr)+0x10ffffffLL)&~0xffffffLL;
     }
     if(!offs && !head->vaddr)
         offs = (uintptr_t)find47bitBlockElf(head->memsz+head->align, mainbin, max_align); // limit to 47bits...
@@ -191,16 +242,23 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
     void* image = NULL;
     if(!head->vaddr) {
         sz += head->align;
-        raw = mmap64((void*)offs, sz, 0, MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE, -1, 0);
+        raw = InternalMmap((void*)offs, sz, 0, MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE, -1, 0);
         image = (void*)(((uintptr_t)raw+max_align)&~max_align);
     } else {
-        image = raw = mmap64((void*)head->vaddr, sz, 0, MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE, -1, 0);
+        image = raw = InternalMmap((void*)head->vaddr, sz, 0, MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE, -1, 0);
+        if(head->vaddr&(box64_pagesize-1)) {
+            // load address might be lower
+            if((uintptr_t)image == (head->vaddr&~(box64_pagesize-1))) {
+                image = (void*)head->vaddr;
+                sz += ((uintptr_t)image)-((uintptr_t)raw);
+            }
+        }
     }
     if(image!=MAP_FAILED && !head->vaddr && image!=(void*)offs) {
         printf_log(LOG_INFO, "%s: Mmap64 for (@%p 0x%zx) for elf \"%s\" returned %p(%p/0x%zx) instead\n", (((uintptr_t)image)&max_align)?"Error":"Warning", (void*)(head->vaddr?head->vaddr:offs), head->memsz, head->name, image, raw, head->align);
         offs = (uintptr_t)image;
         if(((uintptr_t)image)&max_align) {
-            munmap(raw, sz);
+            InternalMunmap(raw, sz);
             return 1;   // that's an error, alocated memory is not aligned properly
         }
     }
@@ -230,8 +288,8 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
     head->memory = (char*)0xffffffffffffffff;
     int n = 0;
     for (size_t i=0; i<head->numPHEntries; ++i) {
-        if(head->PHEntries[i].p_type == PT_LOAD && head->PHEntries[i].p_flags) {
-            Elf64_Phdr * e = &head->PHEntries[i];
+        if(head->PHEntries._64[i].p_type == PT_LOAD && head->PHEntries._64[i].p_flags) {
+            Elf64_Phdr * e = &head->PHEntries._64[i];
 
             head->multiblocks[n].flags = e->p_flags;
             head->multiblocks[n].offs = e->p_offset;
@@ -241,8 +299,8 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
             uint8_t prot = ((e->p_flags & PF_R)?PROT_READ:0)|((e->p_flags & PF_W)?PROT_WRITE:0)|((e->p_flags & PF_X)?PROT_EXEC:0);
             // check if alignment is correct
             uintptr_t balign = head->multiblocks[n].align-1;
-            if(balign<4095) balign = 4095;
-            head->multiblocks[n].asize = (e->p_memsz+(e->p_paddr&balign)+4095)&~4095;
+            if (balign < (box64_pagesize - 1)) balign = box64_pagesize - 1;
+            head->multiblocks[n].asize = (e->p_memsz + (e->p_paddr & balign) + (box64_pagesize - 1)) & ~(box64_pagesize - 1);
             int try_mmap = 1;
             if(e->p_paddr&balign)
                 try_mmap = 0;
@@ -256,9 +314,9 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
                 try_mmap = 0;
             if(try_mmap) {
                 printf_dump(log_level, "Mmaping 0x%lx(0x%lx) bytes @%p for Elf \"%s\"\n", head->multiblocks[n].size, head->multiblocks[n].asize, (void*)head->multiblocks[n].paddr, head->name);
-                void* p = mmap64(
-                    (void*)head->multiblocks[n].paddr, 
-                    head->multiblocks[n].size, 
+                void* p = InternalMmap(
+                    (void*)head->multiblocks[n].paddr,
+                    head->multiblocks[n].size,
                     prot,
                     MAP_PRIVATE|MAP_FIXED, //((prot&PROT_WRITE)?MAP_SHARED:MAP_PRIVATE)|MAP_FIXED,
                     head->fileno,
@@ -280,8 +338,8 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
                 size_t asize = head->multiblocks[n].asize+(head->multiblocks[n].paddr-paddr);
                 void* p = MAP_FAILED;
                 if(paddr==(paddr&~(box64_pagesize-1)) && (asize==ALIGN(asize))) {
-                    printf_dump(log_level, "Mmapping 0x%zx (0x%zx) bytes @%p, will read 0x%zx @%p for Elf \"%s\"\n", asize, e->p_memsz, (void*)paddr, e->p_filesz, (void*)head->multiblocks[n].paddr, head->name);
-                    p = mmap64(
+                    printf_dump(log_level, "Allocating 0x%zx (0x%zx) bytes @%p, will read 0x%zx @%p for Elf \"%s\"\n", asize, e->p_memsz, (void*)paddr, e->p_filesz, (void*)head->multiblocks[n].paddr, head->name);
+                    p = InternalMmap(
                         (void*)paddr,
                         asize,
                         prot|PROT_WRITE,
@@ -304,7 +362,7 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
                     }
                     if(new_size>0) {
                         printf_dump(log_level, "Allocating 0x%zx (0x%zx/0x%zx) bytes @%p, will read 0x%zx @%p for Elf \"%s\"\n", ALIGN(new_size), paddr, e->p_memsz, (void*)new_addr, e->p_filesz, (void*)head->multiblocks[n].paddr, head->name);
-                        p = mmap64(
+                        p = InternalMmap(
                             (void*)new_addr,
                             ALIGN(new_size),
                             prot|PROT_WRITE,
@@ -316,7 +374,7 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
                             p = (void*)paddr;
                     } else {
                         p = (void*)paddr;
-                        printf_dump(log_level, "Will read 0x%zx @%p for Elf \"%s\"\n", e->p_filesz, (void*)head->multiblocks[n].paddr, head->name);    
+                        printf_dump(log_level, "Will read 0x%zx @%p for Elf \"%s\"\n", e->p_filesz, (void*)head->multiblocks[n].paddr, head->name);
                     }
                 }
                 if(p==MAP_FAILED || p!=(void*)paddr) {
@@ -341,7 +399,7 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
                     mprotect((void*)paddr, asize, prot);
             }
 #ifdef DYNAREC
-            if(box64_dynarec && (e->p_flags & PF_X)) {
+            if(BOX64ENV(dynarec) && (e->p_flags & PF_X)) {
                 dynarec_log(LOG_DEBUG, "Add ELF eXecutable Memory %p:%p\n", head->multiblocks[n].p, (void*)head->multiblocks[n].asize);
                 addDBFromAddressRange((uintptr_t)head->multiblocks[n].p, head->multiblocks[n].asize);
             }
@@ -350,8 +408,8 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
                 head->memory = (char*)head->multiblocks[n].p;
             ++n;
         }
-        if(head->PHEntries[i].p_type == PT_TLS) {
-            Elf64_Phdr * e = &head->PHEntries[i];
+        if(head->PHEntries._64[i].p_type == PT_TLS) {
+            Elf64_Phdr * e = &head->PHEntries._64[i];
             char* dest = (char*)(context->tlsdata+context->tlssize+head->tlsbase);
             printf_log(LOG_DEBUG, "Loading TLS block #%zu @%p (0x%zx/0x%zx)\n", i, dest, e->p_filesz, e->p_memsz);
             if(e->p_filesz) {
@@ -366,7 +424,8 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
                 memset(dest+e->p_filesz, 0, e->p_memsz - e->p_filesz);
         }
     }
-
+    // record map
+    RecordEnvMappings((uintptr_t)head->image, head->memsz, head->fileno);
     // can close the elf file now!
     fclose(head->file);
     head->file = NULL;
@@ -381,7 +440,7 @@ void FreeElfMemory(elfheader_t* head)
 #ifdef DYNAREC
         for(int i=0; i<head->multiblock_n; ++i) {
             dynarec_log(LOG_INFO, "Free DynaBlocks %p-%p for %s\n", head->multiblocks[i].p, head->multiblocks[i].p+head->multiblocks[i].asize, head->path);
-            if(box64_dynarec)
+            if(BOX64ENV(dynarec))
                 cleanDBFromAddressRange((uintptr_t)head->multiblocks[i].p, head->multiblocks[i].asize, 1);
             freeProtection((uintptr_t)head->multiblocks[i].p, head->multiblocks[i].asize);
         }
@@ -391,7 +450,7 @@ void FreeElfMemory(elfheader_t* head)
     // we only need to free the overall mmap, no need to free individual part as they are inside the big one
     if(head->raw && head->raw_size) {
         dynarec_log(LOG_INFO, "Unmap elf memory %p-%p for %s\n", head->raw, head->raw+head->raw_size, head->path);
-        munmap(head->raw, head->raw_size);
+        InternalMunmap(head->raw, head->raw_size);
     }
     freeProtection((uintptr_t)head->raw, head->raw_size);
 }
@@ -400,7 +459,7 @@ int isElfHasNeededVer(elfheader_t* head, const char* libname, elfheader_t* verne
 {
     if(!verneeded || !head)
         return 1;
-    if(!head->VerDef || !verneeded->VerNeed)
+    if(!head->VerDef._64 || !verneeded->VerNeed._64)
         return 1;
     int cnt = GetNeededVersionCnt(verneeded, libname);
     for (int i=0; i<cnt; ++i) {
@@ -418,9 +477,9 @@ static int IsSymInElfSpace(const elfheader_t* h, Elf64_Sym* sym)
     if(!h || !sym)
         return 0;
     uintptr_t addr = (uintptr_t)sym;
-    if(h->SymTab && addr>=(uintptr_t)h->SymTab && addr<(uintptr_t)&h->SymTab[h->numSymTab])
+    if(h->SymTab._64 && addr>=(uintptr_t)h->SymTab._64 && addr<(uintptr_t)&h->SymTab._64[h->numSymTab])
         return 1;
-    if(h->DynSym && addr>=(uintptr_t)h->DynSym && addr<(uintptr_t)&h->DynSym[h->numDynSym])
+    if(h->DynSym._64 && addr>=(uintptr_t)h->DynSym._64 && addr<(uintptr_t)&h->DynSym._64[h->numDynSym])
         return 1;
     return 0;
 }
@@ -431,11 +490,11 @@ static elfheader_t* FindElfSymbol(box64context_t *context, Elf64_Sym* sym)
     for (int i=0; i<context->elfsize; ++i)
         if(IsSymInElfSpace(context->elfs[i], sym))
             return context->elfs[i];
-    
+
     return NULL;
 }
 
-int FindR64COPYRel(elfheader_t* h, const char* name, uintptr_t *offs, uint64_t** p, size_t size, int version, const char* vername, int veropt)
+static int FindR64COPYRel(elfheader_t* h, const char* name, uintptr_t *offs, uint64_t** p, size_t size, int version, const char* vername, int veropt)
 {
     if(!h)
         return 0;
@@ -445,8 +504,8 @@ int FindR64COPYRel(elfheader_t* h, const char* name, uintptr_t *offs, uint64_t**
     int cnt = h->relasz / h->relaent;
     for (int i=0; i<cnt; ++i) {
         int t = ELF64_R_TYPE(rela[i].r_info);
-        Elf64_Sym *sym = &h->DynSym[ELF64_R_SYM(rela[i].r_info)];
-        const char* symname = SymName(h, sym);
+        Elf64_Sym *sym = &h->DynSym._64[ELF64_R_SYM(rela[i].r_info)];
+        const char* symname = SymName64(h, sym);
         if((t==R_X86_64_COPY) && symname && !strcmp(symname, name) && (sym->st_size==size)) {
             int version2 = h->VerSym?((Elf64_Half*)((uintptr_t)h->VerSym+h->delta))[ELF64_R_SYM(rela[i].r_info)]:-1;
             if(version2!=-1) version2 &= 0x7fff;
@@ -464,7 +523,7 @@ int FindR64COPYRel(elfheader_t* h, const char* name, uintptr_t *offs, uint64_t**
     return 0;
 }
 
-int RelocateElfREL(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head, int cnt, Elf64_Rel *rel)
+static int RelocateElfREL(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head, int cnt, Elf64_Rel *rel)
 {
     printf_log(LOG_NONE, "Error: REL type of Relocation unsupported (only RELA)\n");
     return 1;
@@ -483,7 +542,7 @@ EXPORT uintptr_t my__dl_tlsdesc_undefweak(x64emu_t* emu)
     return td->arg;
 }
 
-void GrabX64CopyMainElfReloc(elfheader_t* head)
+static void GrabX64CopyMainElfReloc(elfheader_t* head)
 {
     if(head->rela) {
         int cnt = head->relasz / head->relaent;
@@ -492,8 +551,8 @@ void GrabX64CopyMainElfReloc(elfheader_t* head)
         for (int i=0; i<cnt; ++i) {
             int t = ELF64_R_TYPE(rela[i].r_info);
             if(t == R_X86_64_COPY) {
-                Elf64_Sym *sym = &head->DynSym[ELF64_R_SYM(rela[i].r_info)];
-                const char* symname = SymName(head, sym);
+                Elf64_Sym *sym = &head->DynSym._64[ELF64_R_SYM(rela[i].r_info)];
+                const char* symname = SymName64(head, sym);
                 int version = head->VerSym?((Elf64_Half*)((uintptr_t)head->VerSym+head->delta))[ELF64_R_SYM(rela[i].r_info)]:-1;
                 if(version!=-1) version &=0x7fff;
                 const char* vername = GetSymbolVersion(head, version);
@@ -501,21 +560,6 @@ void GrabX64CopyMainElfReloc(elfheader_t* head)
                 int veropt = flags?0:1;
                 uintptr_t offs = sym->st_value + head->delta;
                 AddUniqueSymbol(my_context->globdata, symname, offs, sym->st_size, version, vername, veropt);
-            }
-        }
-    }
-}
-void CheckGNUUniqueBindings(elfheader_t* head)
-{
-    if(head->rela) {
-        int cnt = head->relasz / head->relaent;
-        Elf64_Rela* rela = (Elf64_Rela *)(head->rela + head->delta);
-        printf_dump(LOG_DEBUG, "Checking for symbol with STB_GNU_UNIQUE bindingsfor %s\n", head->name);
-        for (int i=0; i<cnt; ++i) {
-            int bind = ELF64_ST_BIND(rela[i].r_info);
-            if(bind == STB_GNU_UNIQUE) {
-                head->gnuunique = 1;
-                return; // can stop searching
             }
         }
     }
@@ -531,15 +575,15 @@ static elfheader_t* checkElfLib(elfheader_t* h, library_t* lib)
     return h;
 }
 
-int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head, int cnt, Elf64_Rela *rela, int* need_resolv)
+static int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head, int cnt, Elf64_Rela *rela, int* need_resolv)
 {
     int ret_ok = 0;
     for (int i=0; i<cnt; ++i) {
         int t = ELF64_R_TYPE(rela[i].r_info);
-        Elf64_Sym *sym = &head->DynSym[ELF64_R_SYM(rela[i].r_info)];
+        Elf64_Sym *sym = &head->DynSym._64[ELF64_R_SYM(rela[i].r_info)];
         int bind = ELF64_ST_BIND(sym->st_info);
         //uint64_t ndx = sym->st_shndx;
-        const char* symname = SymName(head, sym);
+        const char* symname = SymName64(head, sym);
         uint64_t *p = (uint64_t*)(rela[i].r_offset + head->delta);
         uintptr_t offs = 0;
         uintptr_t end = 0;
@@ -554,7 +598,11 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
         Elf64_Sym* elfsym = NULL;
         int vis = ELF64_ST_VISIBILITY(sym->st_other);
         if(vis==STV_PROTECTED) {
-            elfsym = ElfDynSymLookup(head, symname);
+            elfsym = ElfDynSymLookup64(head, symname);
+            if(elfsym) {
+                offs = elfsym->st_value + head->delta;
+                end = offs + elfsym->st_size;
+            }
             printf_log(LOG_DEBUG, "Symbol %s from %s is PROTECTED\n", symname, head->name);
         } else {
             if(bind==STB_GNU_UNIQUE) {
@@ -566,7 +614,7 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
                     offs = sym->st_value + head->delta;
                     end = offs + sym->st_size;
                 } else {
-                    elfsym = ElfDynSymLookup(head, symname);
+                    elfsym = ElfDynSymLookup64(head, symname);
                     if(elfsym && elfsym->st_shndx) {
                         offs = elfsym->st_value + head->delta;
                         end = offs + elfsym->st_size;
@@ -638,8 +686,8 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
             case R_X86_64_GLOB_DAT:
                 if(GetSymbolStartEnd(my_context->globdata, symname, &globoffs, &globend, version, vername, 1, veropt)) {
                     globp = (uint64_t*)globoffs;
-                    printf_dump(LOG_NEVER, "Apply %s R_X86_64_GLOB_DAT with R_X86_64_COPY @%p/%p (%p/%p -> %p/%p) size=%zd on sym=%s (%sver=%d/%s) \n", 
-                        BindSym(bind), p, globp, (void*)(p?(*p):0), 
+                    printf_dump(LOG_NEVER, "Apply %s R_X86_64_GLOB_DAT with R_X86_64_COPY @%p/%p (%p/%p -> %p/%p) size=%zd on sym=%s (%sver=%d/%s) \n",
+                        BindSym(bind), p, globp, (void*)(p?(*p):0),
                         (void*)(globp?(*globp):0), (void*)offs, (void*)globoffs, sym->st_size, symname, veropt?"opt":"", version, vername?vername:"(none)");
                     sym_elf = my_context->elfs[0];
                     *p = globoffs;
@@ -657,9 +705,9 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
             case R_X86_64_JUMP_SLOT:
                 // apply immediatly for gobject closure marshal or for LOCAL binding. Also, apply immediatly if it doesn't jump in the got
                 tmp = (uintptr_t)(*p);
-                if (bind==STB_LOCAL 
-                  || ((symname && strstr(symname, "g_cclosure_marshal_")==symname)) 
-                  || ((symname && strstr(symname, "__pthread_unwind_next")==symname)) 
+                if (bind==STB_LOCAL
+                  || ((symname && strstr(symname, "g_cclosure_marshal_")==symname))
+                  || ((symname && strstr(symname, "__pthread_unwind_next")==symname))
                   || !tmp
                   || !((tmp>=head->plt && tmp<head->plt_end) || (tmp>=head->gotplt && tmp<head->gotplt_end))
                   || !need_resolv
@@ -675,7 +723,7 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
                         // return -1;
                     } else {
                         if(p) {
-                            printf_dump(LOG_NEVER, "Apply %s R_X86_64_JUMP_SLOT @%p with sym=%s (%p -> %p / %s (%sver=%d / %s))\n", 
+                            printf_dump(LOG_NEVER, "Apply %s R_X86_64_JUMP_SLOT @%p with sym=%s (%p -> %p / %s (%sver=%d / %s))\n",
                                 BindSym(bind), p, symname, *(void**)p, (void*)(offs+rela[i].r_addend), sym_elf?sym_elf->name:"native", veropt?"opt":"", version, vername?vername:"(none)");
                             *p = offs + rela[i].r_addend;
                             if(sym_elf && sym_elf!=last_elf && sym_elf!=head) last_elf = checkElfLib(head, sym_elf->lib);
@@ -684,7 +732,7 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
                         }
                     }
                 } else {
-                    printf_dump(LOG_NEVER, "Preparing (if needed) %s R_X86_64_JUMP_SLOT @%p (0x%lx->0x%0lx) with sym=%s to be apply later (addend=%ld)\n", 
+                    printf_dump(LOG_NEVER, "Preparing (if needed) %s R_X86_64_JUMP_SLOT @%p (0x%lx->0x%0lx) with sym=%s to be apply later (addend=%ld)\n",
                         BindSym(bind), p, *p, *p+head->delta, symname, rela[i].r_addend);
                     *p += head->delta;
                     *need_resolv = 1;
@@ -695,7 +743,7 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
                     if(offs!=globoffs) {
                         offs = globoffs;
                         sym_elf = my_context->elfs[0];
-                        elfsym = ElfDynSymLookup(sym_elf, symname);
+                        elfsym = ElfDynSymLookup64(sym_elf, symname);
                     }
                 }
                 if (!offs && !elfsym) {
@@ -703,7 +751,7 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
                     if(bind==STB_GLOBAL)
                         ret_ok = 1;
                 } else {
-                    printf_dump(LOG_NEVER, "Apply %s R_X86_64_64 @%p with sym=%s (%sver=%d/%s) addend=0x%lx (%p -> %p)\n", 
+                    printf_dump(LOG_NEVER, "Apply %s R_X86_64_64 @%p with sym=%s (%sver=%d/%s) addend=0x%lx (%p -> %p)\n",
                         BindSym(bind), p, symname, veropt?"opt":"", version, vername?vername:"(none)", rela[i].r_addend, *(void**)p, (void*)(offs+rela[i].r_addend/*+*(uint64_t*)p*/));
                     *p /*+*/= offs+rela[i].r_addend;
                     if(sym_elf && sym_elf!=last_elf && sym_elf!=head) last_elf = checkElfLib(head, sym_elf->lib);
@@ -718,11 +766,11 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
                     }
                     if(sym_elf) {
                         delta = *(int64_t*)p;
-                        printf_dump(LOG_NEVER, "Applying %s %s on %s @%p (%ld -> %ld+%ld+%ld, size=%ld)\n", BindSym(bind), DumpRelType(t), symname, p, delta, sym_elf->tlsbase, (int64_t)offs, rela[i].r_addend, end-offs);
+                        printf_dump(LOG_NEVER, "Applying %s %s on %s @%p (%ld -> %ld+%ld+%ld, size=%ld)\n", BindSym(bind), DumpRelType64(t), symname, p, delta, sym_elf->tlsbase, (int64_t)offs, rela[i].r_addend, end-offs);
                         *p = (uintptr_t)((int64_t)offs + rela[i].r_addend + sym_elf->tlsbase);
                         if(sym_elf && sym_elf!=last_elf && sym_elf!=head) last_elf = checkElfLib(head, sym_elf->lib);
                     } else {
-                        printf_log(LOG_INFO, "Warning, cannot apply %s %s on %s @%p (%ld), no elf_header found\n", BindSym(bind), DumpRelType(t), symname, p, (int64_t)offs);
+                        printf_log(LOG_INFO, "Warning, cannot apply %s %s on %s @%p (%ld), no elf_header found\n", BindSym(bind), DumpRelType64(t), symname, p, (int64_t)offs);
                     }
                 }
                 break;
@@ -779,13 +827,13 @@ int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbin
                 }
                 break;
             default:
-                printf_log(LOG_INFO, "Warning, don't know of to handle rela #%d %s on %s\n", i, DumpRelType(ELF64_R_TYPE(rela[i].r_info)), symname);
+                printf_log(LOG_INFO, "Warning, don't know of to handle rela #%d %s on %s\n", i, DumpRelType64(ELF64_R_TYPE(rela[i].r_info)), symname);
         }
     }
     return bindnow?ret_ok:0;
 }
 
-int RelocateElfRELR(elfheader_t *head, int cnt, Elf64_Relr *relr) {
+static int RelocateElfRELR(elfheader_t *head, int cnt, Elf64_Relr *relr) {
     Elf64_Addr *where = NULL;
     for (int i = 0; i < cnt; i++) {
         Elf64_Relr p = relr[i];
@@ -805,7 +853,13 @@ int RelocateElfRELR(elfheader_t *head, int cnt, Elf64_Relr *relr) {
     return 0;
 }
 
-int RelocateElf(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head)
+int RelocateElf32(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head)
+#ifndef BOX32
+{ return -1; }
+#else
+ ;
+#endif
+int RelocateElf64(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head)
 {
     if((head->flags&DF_BIND_NOW) && !bindnow) {
         bindnow = 1;
@@ -813,29 +867,39 @@ int RelocateElf(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, e
     }
     if(head->relr) {
         int cnt = head->relrsz / head->relrent;
-        DumpRelRTable(head, cnt, (Elf64_Relr *)(head->relr + head->delta), "RelR");
+        DumpRelRTable64(head, cnt, (Elf64_Relr *)(head->relr + head->delta), "RelR");
         printf_dump(LOG_DEBUG, "Applying %d Relocation(s) without Addend for %s bindnow=%d, deepbind=%d\n", cnt, head->name, bindnow, deepbind);
         if(RelocateElfRELR(head, cnt, (Elf64_Relr *)(head->relr + head->delta)))
             return -1;
     }
     if(head->rel) {
         int cnt = head->relsz / head->relent;
-        DumpRelTable(head, cnt, (Elf64_Rel *)(head->rel + head->delta), "Rel");
+        DumpRelTable64(head, cnt, (Elf64_Rel *)(head->rel + head->delta), "Rel");
         printf_dump(LOG_DEBUG, "Applying %d Relocation(s) for %s bindnow=%d, deepbind=%d\n", cnt, head->name, bindnow, deepbind);
         if(RelocateElfREL(maplib, local_maplib, bindnow, deepbind, head, cnt, (Elf64_Rel *)(head->rel + head->delta)))
             return -1;
     }
     if(head->rela) {
         int cnt = head->relasz / head->relaent;
-        DumpRelATable(head, cnt, (Elf64_Rela *)(head->rela + head->delta), "RelA");
+        DumpRelATable64(head, cnt, (Elf64_Rela *)(head->rela + head->delta), "RelA");
         printf_dump(LOG_DEBUG, "Applying %d Relocation(s) with Addend for %s bindnow=%d, deepbind=%d\n", cnt, head->name, bindnow, deepbind);
         if(RelocateElfRELA(maplib, local_maplib, bindnow, deepbind, head, cnt, (Elf64_Rela *)(head->rela + head->delta), NULL))
             return -1;
     }
     return 0;
 }
+int RelocateElf(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head)
+{
+    return box64_is32bits?RelocateElf32(maplib, local_maplib, bindnow, deepbind, head):RelocateElf64(maplib, local_maplib, bindnow, deepbind, head);
+}
 
-int RelocateElfPlt(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head)
+int RelocateElfPlt32(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head)
+#ifndef BOX32
+{ return -1; }
+#else
+ ;
+#endif
+int RelocateElfPlt64(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head)
 {
     int need_resolver = 0;
     if((head->flags&DF_BIND_NOW) && !bindnow) {
@@ -845,33 +909,37 @@ int RelocateElfPlt(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind
     if(head->pltrel) {
         int cnt = head->pltsz / head->pltent;
         if(head->pltrel==DT_REL) {
-            DumpRelTable(head, cnt, (Elf64_Rel *)(head->jmprel + head->delta), "PLT");
+            DumpRelTable64(head, cnt, (Elf64_Rel *)(head->jmprel + head->delta), "PLT");
             printf_dump(LOG_DEBUG, "Applying %d PLT Relocation(s) for %s bindnow=%d, deepbind=%d\n", cnt, head->name, bindnow, deepbind);
             if(RelocateElfREL(maplib, local_maplib, bindnow, deepbind, head, cnt, (Elf64_Rel *)(head->jmprel + head->delta)))
                 return -1;
         } else if(head->pltrel==DT_RELA) {
-            DumpRelATable(head, cnt, (Elf64_Rela *)(head->jmprel + head->delta), "PLT");
+            DumpRelATable64(head, cnt, (Elf64_Rela *)(head->jmprel + head->delta), "PLT");
             printf_dump(LOG_DEBUG, "Applying %d PLT Relocation(s) with Addend for %s bindnow=%d, deepbind=%d\n", cnt, head->name, bindnow, deepbind);
             if(RelocateElfRELA(maplib, local_maplib, bindnow, deepbind, head, cnt, (Elf64_Rela *)(head->jmprel + head->delta), &need_resolver))
                 return -1;
         }
         if(need_resolver) {
-            if(pltResolver==(uintptr_t)-1) {
-                pltResolver = AddBridge(my_context->system, vFE, PltResolver, 0, "PltResolver");
+            if(pltResolver64==(uintptr_t)-1) {
+                pltResolver64 = AddBridge(my_context->system, vFE, PltResolver64, 0, "PltResolver");
             }
             if(head->pltgot) {
-                *(uintptr_t*)(head->pltgot+head->delta+16) = pltResolver;
+                *(uintptr_t*)(head->pltgot+head->delta+16) = pltResolver64;
                 *(uintptr_t*)(head->pltgot+head->delta+8) = (uintptr_t)head;
                 printf_dump(LOG_DEBUG, "PLT Resolver injected in plt.got at %p\n", (void*)(head->pltgot+head->delta+16));
             } else if(head->got) {
-                *(uintptr_t*)(head->got+head->delta+16) = pltResolver;
+                *(uintptr_t*)(head->got+head->delta+16) = pltResolver64;
                 *(uintptr_t*)(head->got+head->delta+8) = (uintptr_t)head;
                 printf_dump(LOG_DEBUG, "PLT Resolver injected in got at %p\n", (void*)(head->got+head->delta+16));
             }
         }
     }
-   
+
     return 0;
+}
+int RelocateElfPlt(lib_t *maplib, lib_t *local_maplib, int bindnow, int deepbind, elfheader_t* head)
+{
+    return box64_is32bits?RelocateElfPlt32(maplib, local_maplib, bindnow, deepbind, head):RelocateElfPlt64(maplib, local_maplib, bindnow, deepbind, head);
 }
 
 void CalcStack(elfheader_t* elf, uint64_t* stacksz, size_t* stackalign)
@@ -882,49 +950,12 @@ void CalcStack(elfheader_t* elf, uint64_t* stacksz, size_t* stackalign)
         *stackalign = elf->stackalign;
 }
 
-Elf64_Sym* GetFunction(elfheader_t* h, const char* name)
-{
-    // TODO: create a hash on named to avoid this loop
-    for (size_t i=0; i<h->numSymTab; ++i) {
-        int type = ELF64_ST_TYPE(h->SymTab[i].st_info);
-        if(type==STT_FUNC) {
-            const char * symname = h->StrTab+h->SymTab[i].st_name;
-            if(strcmp(symname, name)==0) {
-                return h->SymTab+i;
-            }
-        }
-    }
-    return NULL;
-}
-
-Elf64_Sym* GetElfObject(elfheader_t* h, const char* name)
-{
-    for (size_t i=0; i<h->numSymTab; ++i) {
-        int type = ELF64_ST_TYPE(h->SymTab[i].st_info);
-        if(type==STT_OBJECT) {
-            const char * symname = h->StrTab+h->SymTab[i].st_name;
-            if(strcmp(symname, name)==0) {
-                return h->SymTab+i;
-            }
-        }
-    }
-    return NULL;
-}
-
-
-uintptr_t GetFunctionAddress(elfheader_t* h, const char* name)
-{
-    Elf64_Sym* sym = GetFunction(h, name);
-    if(sym) return sym->st_value;
-    return 0;
-}
-
 uintptr_t GetEntryPoint(lib_t* maplib, elfheader_t* h)
 {
     (void)maplib;
     uintptr_t ep = h->entrypoint + h->delta;
     printf_log(LOG_DEBUG, "Entry Point is %p\n", (void*)ep);
-    if(box64_dump) {
+    if (BOX64ENV(dump)) {
         printf_dump(LOG_NEVER, "(short) Dump of Entry point\n");
         int sz = 64;
         uintptr_t lastbyte = GetLastByte(h);
@@ -945,13 +976,23 @@ uintptr_t GetLastByte(elfheader_t* h)
 #endif
 
 void checkHookedSymbols(elfheader_t* h); // in mallochook.c
+void AddSymbols32(lib_t *maplib, elfheader_t* h)
+#ifndef BOX32
+{ }
+#else
+ ;
+#endif
 void AddSymbols(lib_t *maplib, elfheader_t* h)
 {
-    //if(box64_dump && h->hash)   old_elf_hash_dump(h);
-    //if(box64_dump && h->gnu_hash)   new_elf_hash_dump(h);
-    if(box64_dump && h->DynSym) DumpDynSym(h);
-    if(h==my_context->elfs[0]) 
-        GrabX64CopyMainElfReloc(h);
+    if(box64_is32bits) {
+        AddSymbols32(maplib, h);
+    } else {
+        // if(BOX64ENV(dump) && h->hash)   old_elf_hash_dump(h);
+        // if(BOX64ENV(dump) && h->gnu_hash)   new_elf_hash_dump(h);
+        if (BOX64ENV(dump) && h->DynSym._64) DumpDynSym64(h);
+        if (h==my_context->elfs[0])
+            GrabX64CopyMainElfReloc(h);
+    }
     #ifndef STATICBUILD
     checkHookedSymbols(h);
     #endif
@@ -977,9 +1018,10 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, int local, int bindnow, int de
         return 0;
     DumpDynamicRPath(h);
     // update RPATH first
-    for (size_t i=0; i<h->numDynamic; ++i)
-        if(h->Dynamic[i].d_tag==DT_RPATH || h->Dynamic[i].d_tag==DT_RUNPATH) {
-            char *rpathref = h->DynStrTab+h->delta+h->Dynamic[i].d_un.d_val;
+    for (size_t i=0; i<h->numDynamic; ++i) {
+        int tag = box64_is32bits?h->Dynamic._32[i].d_tag:h->Dynamic._64[i].d_tag;
+        if(tag==DT_RPATH || tag==DT_RUNPATH) {
+            char *rpathref = h->DynStrTab+h->delta+(box64_is32bits?h->Dynamic._32[i].d_un.d_val:h->Dynamic._64[i].d_un.d_val);
             char* rpath = rpathref;
             while(strstr(rpath, "$ORIGIN")) {
                 char* origin = box_strdup(h->path);
@@ -1024,7 +1066,7 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, int local, int bindnow, int de
                 box_free(platform);
             }
             if(strchr(rpath, '$')) {
-                printf_log(LOG_INFO, "BOX64: Warning, RPATH with $ variable not supported yet (%s)\n", rpath);
+                printf_log(LOG_INFO, "Warning, RPATH with $ variable not supported yet (%s)\n", rpath);
             } else {
                 printf_log(LOG_DEBUG, "Prepending path \"%s\" to BOX64_LD_LIBRARY_PATH\n", rpath);
                 PrependList(&box64->box64_ld_lib, rpath, 1);
@@ -1032,23 +1074,32 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, int local, int bindnow, int de
             if(rpath!=rpathref)
                 box_free(rpath);
         }
-
+    }
     DumpDynamicNeeded(h);
     int cnt = 0;
     // count the number of needed libs, and also grab soname
     for (size_t i=0; i<h->numDynamic; ++i) {
-        if(h->Dynamic[i].d_tag==DT_NEEDED)
+        int tag = box64_is32bits?h->Dynamic._32[i].d_tag:h->Dynamic._64[i].d_tag;
+        if(tag==DT_NEEDED)
             ++cnt;
-        if(h->Dynamic[i].d_tag==DT_SONAME)
-            h->soname = h->DynStrTab+h->delta+h->Dynamic[i].d_un.d_val;
+        if(tag==DT_SONAME)
+            h->soname = h->DynStrTab+h->delta+(box64_is32bits?h->Dynamic._32[i].d_un.d_val:h->Dynamic._64[i].d_un.d_val);
     }
+    #ifndef ANDROID
+    if(box64_is32bits && strstr(h->name, "lsteamclient.dll.so"))
+        ++cnt;
+    #endif
     h->needed = new_neededlib(cnt);
     if(h == my_context->elfs[0])
         my_context->neededlibs = h->needed;
     int j=0;
     for (size_t i=0; i<h->numDynamic; ++i)
-        if(h->Dynamic[i].d_tag==DT_NEEDED)
-            h->needed->names[j++] = h->DynStrTab+h->delta+h->Dynamic[i].d_un.d_val;
+        if((box64_is32bits?h->Dynamic._32[i].d_tag:h->Dynamic._64[i].d_tag)==DT_NEEDED)
+            h->needed->names[j++] = h->DynStrTab+h->delta+(box64_is32bits?h->Dynamic._32[i].d_un.d_val:h->Dynamic._64[i].d_un.d_val);
+    #ifndef ANDROID
+    if(box64_is32bits && strstr(h->name, "lsteamclient.dll.so"))
+        h->needed->names[j++] = "libgcc_s.so.1";
+    #endif
     if(h==my_context->elfs[0] && box64_addlibs.size) {
         for(int i=0; i<box64_addlibs.size; ++i) {
             printf_log(LOG_INFO, "BOX64, Adding %s to needed libs of %s\n", box64_addlibs.paths[i], h->name);
@@ -1058,7 +1109,7 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, int local, int bindnow, int de
     // TODO: Add LD_LIBRARY_PATH and RPATH handling
     if(AddNeededLib(maplib, local, bindnow, deepbind, h->needed, h, box64, emu)) {
         printf_log(LOG_INFO, "Error loading one of needed lib\n");
-        if(!allow_missing_libs)
+        if(!BOX64ENV(allow_missing_libs))
             return 1;   //error...
     }
     return 0;
@@ -1069,8 +1120,8 @@ int ElfCheckIfUseTCMallocMinimal(elfheader_t* h)
     if(!h)
         return 0;
     for (size_t i=0; i<h->numDynamic; ++i)
-        if(h->Dynamic[i].d_tag==DT_NEEDED) {
-            char *needed = h->DynStrTab+h->delta+h->Dynamic[i].d_un.d_val;
+        if((box64_is32bits?h->Dynamic._32[i].d_tag:h->Dynamic._64[i].d_tag)==DT_NEEDED) {
+            char *needed = h->DynStrTab+h->delta+(box64_is32bits?h->Dynamic._32[i].d_un.d_val:h->Dynamic._64[i].d_un.d_val);
             if(!strcmp(needed, "libtcmalloc_minimal.so.4")) // tcmalloc needs to be the 1st lib loaded
                 return 1;
             else if(!strcmp(needed, "libtcmalloc_minimal.so.0")) // tcmalloc needs to be the 1st lib loaded
@@ -1133,15 +1184,32 @@ void RunElfInit(elfheader_t* h, x64emu_t *emu)
                 RunElfInit(lib_elf, emu);
         }
     printf_dump(LOG_DEBUG, "Calling Init for %s @%p\n", ElfName(h), (void*)p);
-    if(h->initentry)
-        RunFunctionWithEmu(emu, 0, p, 3, my_context->argc, my_context->argv, my_context->envv);
+    if(h->initentry) {
+        if(box64_is32bits)
+            RunFunctionWithEmu(emu, 0, p, 3, my_context->argc, my_context->argv32, my_context->envv32);
+        else
+            RunFunctionWithEmu(emu, 0, p, 3, my_context->argc, my_context->argv, my_context->envv);
+    }
     printf_dump(LOG_DEBUG, "Done Init for %s\n", ElfName(h));
     // and check init array now
-    Elf64_Addr *addr = (Elf64_Addr*)(h->initarray + h->delta);
-    for (size_t i=0; i<h->initarray_sz; ++i) {
-        if(addr[i]) {
-            printf_dump(LOG_DEBUG, "Calling Init[%zu] for %s @%p\n", i, ElfName(h), (void*)addr[i]);
-            RunFunctionWithEmu(emu, 0, (uintptr_t)addr[i], 3, my_context->argc, my_context->argv, my_context->envv);
+    #ifdef BOX32
+    if(box64_is32bits) {
+        Elf32_Addr *addr = (Elf32_Addr*)(h->initarray + h->delta);
+        for (size_t i=0; i<h->initarray_sz; ++i) {
+            if(addr[i]) {
+                printf_dump(LOG_DEBUG, "Calling Init[%zu] for %s @%p\n", i, ElfName(h), from_ptrv(addr[i]));
+                RunFunctionWithEmu(emu, 0, (uintptr_t)addr[i], 3, my_context->argc, my_context->argv32, my_context->envv32);
+            }
+        }
+    } else
+    #endif
+    {
+        Elf64_Addr *addr = (Elf64_Addr*)(h->initarray + h->delta);
+        for (size_t i=0; i<h->initarray_sz; ++i) {
+            if(addr[i]) {
+                printf_dump(LOG_DEBUG, "Calling Init[%zu] for %s @%p\n", i, ElfName(h), (void*)addr[i]);
+                RunFunctionWithEmu(emu, 0, (uintptr_t)addr[i], 3, my_context->argc, my_context->argv, my_context->envv);
+            }
         }
     }
 
@@ -1183,10 +1251,21 @@ void RunElfFini(elfheader_t* h, x64emu_t *emu)
     printf_log(LOG_DEBUG, "Android does not support Fini for %s\n", ElfName(h));
 #else
     // first check fini array
-    Elf64_Addr *addr = (Elf64_Addr*)(h->finiarray + h->delta);
-    for (int i=h->finiarray_sz-1; i>=0; --i) {
-        printf_dump(LOG_DEBUG, "Calling Fini[%d] for %s @%p\n", i, ElfName(h), (void*)addr[i]);
-        RunFunctionWithEmu(emu, 0, (uintptr_t)addr[i], 0);
+    #ifdef BOX32
+    if(box64_is32bits) {
+        Elf32_Addr *addr = (Elf32_Addr*)(h->finiarray + h->delta);
+        for (int i=h->finiarray_sz-1; i>=0; --i) {
+            printf_dump(LOG_DEBUG, "Calling Fini[%d] for %s @%p\n", i, ElfName(h), from_ptrv(addr[i]));
+            RunFunctionWithEmu(emu, 0, (uintptr_t)addr[i], 0);
+        }
+    } else
+    #endif
+    {
+        Elf64_Addr *addr = (Elf64_Addr*)(h->finiarray + h->delta);
+        for (int i=h->finiarray_sz-1; i>=0; --i) {
+            printf_dump(LOG_DEBUG, "Calling Fini[%d] for %s @%p\n", i, ElfName(h), (void*)addr[i]);
+            RunFunctionWithEmu(emu, 0, (uintptr_t)addr[i], 0);
+        }
     }
     // then the "old-style" fini
     if(h->finientry) {
@@ -1232,7 +1311,7 @@ int IsAddressInElfSpace(const elfheader_t* h, uintptr_t addr)
         uintptr_t end = (uintptr_t)h->multiblocks[i].p + h->multiblocks[i].asize - 1;
         if(base && addr>=base && addr<=end)
             return 1;
-        
+
     }
     return 0;
 }
@@ -1241,7 +1320,7 @@ elfheader_t* FindElfAddress(box64context_t *context, uintptr_t addr)
     for (int i=0; i<context->elfsize; ++i)
         if(IsAddressInElfSpace(context->elfs[i], addr))
             return context->elfs[i];
-    
+
     return NULL;
 }
 
@@ -1258,7 +1337,7 @@ const char* FindNearestSymbolName(elfheader_t* h, void* p, uintptr_t* start, uin
     if(!h) {
         if(getProtection((uintptr_t)p)&(PROT_READ)) {
             uintptr_t adj_p = ((uintptr_t)p)&~(sizeof(onebridge_t)-1);
-            if(*(uint8_t*)(adj_p)==0xCC && *(uint8_t*)(adj_p+1)=='S' && *(uint8_t*)(adj_p+2)=='C') {
+            if (*(uint8_t*)(adj_p) == 0xCC && IsBridgeSignature(*(uint8_t*)(adj_p + 1), *(uint8_t*)(adj_p + 2))) {
                 ret = getBridgeName((void*)adj_p);
                 if(ret) {
                     if(start)
@@ -1268,34 +1347,43 @@ const char* FindNearestSymbolName(elfheader_t* h, void* p, uintptr_t* start, uin
                 }
             }
         }
+        if(!ret) {
+            const char* filename = NULL;
+            uintptr_t start_map = 0;
+            if(IsAddrFileMapped(addr, &filename, &start_map)) {
+                if(start) *start = start_map;
+                if(sz) *sz = SizeFileMapped(addr);
+                ret = filename;
+            }
+        }
         return ret;
     }
     if(!h || h->fini_done)
         return ret;
 
     for (size_t i=0; i<h->numSymTab && distance!=0; ++i) {
-        const char * symname = h->StrTab+h->SymTab[i].st_name;
-        uintptr_t offs = h->SymTab[i].st_value + h->delta;
+        const char * symname = box64_is32bits?(h->StrTab+h->SymTab._32[i].st_name):(h->StrTab+h->SymTab._64[i].st_name);
+        uintptr_t offs = (box64_is32bits?h->SymTab._32[i].st_value:h->SymTab._64[i].st_value) + h->delta;
 
         if(offs<=addr) {
             if(distance>addr-offs) {
                 distance = addr-offs;
                 ret = symname;
                 s = offs;
-                size = h->SymTab[i].st_size;
+                size = box64_is32bits?h->SymTab._32[i].st_size:h->SymTab._64[i].st_size;
             }
         }
     }
     for (size_t i=0; i<h->numDynSym && distance!=0; ++i) {
-        const char * symname = h->DynStr+h->DynSym[i].st_name;
-        uintptr_t offs = h->DynSym[i].st_value + h->delta;
+        const char * symname = h->DynStr+(box64_is32bits?h->DynSym._32[i].st_name:h->DynSym._64[i].st_name);
+        uintptr_t offs = (box64_is32bits?h->DynSym._32[i].st_value:h->DynSym._64[i].st_value) + h->delta;
 
         if(offs<=addr) {
             if(distance>addr-offs) {
                 distance = addr-offs;
                 ret = symname;
                 s = offs;
-                size = h->DynSym[i].st_size;
+                size = box64_is32bits?h->DynSym._32[i].st_size:h->DynSym._64[i].st_size;
             }
         }
     }
@@ -1376,32 +1464,8 @@ void* GetDynamicSection(elfheader_t* h)
 {
     if(!h)
         return NULL;
-    return h->Dynamic;
+    return box64_is32bits?((void*)h->Dynamic._32):((void*)h->Dynamic._64);
 }
-
-#ifdef DYNAREC
-dynablock_t* GetDynablocksFromAddress(box64context_t *context, uintptr_t addr)
-{
-    (void)context;
-    // if we are here, the there is not block in standard "space"
-    /*dynablocklist_t* ret = getDBFromAddress(addr);
-    if(ret) {
-        return ret;
-    }*/
-    if(box64_dynarec_forced) {
-        addDBFromAddressRange(addr, 1);
-        return getDB(addr);
-    }
-    //check if address is in an elf... if yes, grant a block (should I warn)
-    Dl_info info;
-    if(dladdr((void*)addr, &info)) {
-        dynarec_log(LOG_INFO, "Address %p is in a native Elf memory space (function \"%s\" in %s)\n", (void*)addr, info.dli_sname, info.dli_fname);
-        return NULL;
-    }
-    dynarec_log(LOG_INFO, "Address %p not found in Elf memory and is not a native call wrapper\n", (void*)addr);
-    return NULL;
-}
-#endif
 
 typedef struct my_dl_phdr_info_s {
     void*           dlpi_addr;
@@ -1451,7 +1515,16 @@ static void* find_dl_iterate_phdr_Fct(void* fct)
 }
 #undef SUPER
 
+EXPORT int my32_dl_iterate_phdr(x64emu_t *emu, void* F, void *data)
+#ifdef BOX32
+;
+#else
+{
+    return -1;
+}
+#endif
 EXPORT int my_dl_iterate_phdr(x64emu_t *emu, void* F, void *data) {
+    if(box64_is32bits) return my32_dl_iterate_phdr(emu, F, data);
     printf_log(LOG_DEBUG, "Call to partially implemented dl_iterate_phdr(%p, %p)\n", F, data);
     box64context_t *context = GetEmuContext(emu);
     const char* empty = "";
@@ -1461,7 +1534,7 @@ EXPORT int my_dl_iterate_phdr(x64emu_t *emu, void* F, void *data) {
             my_dl_phdr_info_t info;
             info.dlpi_addr = GetElfDelta(context->elfs[idx]);
             info.dlpi_name = idx?context->elfs[idx]->name:empty;    //1st elf is program, and this one doesn't get a name
-            info.dlpi_phdr = context->elfs[idx]->PHEntries;
+            info.dlpi_phdr = context->elfs[idx]->PHEntries._64;
             info.dlpi_phnum = context->elfs[idx]->numPHEntries;
             if((ret = dl_iterate_phdr_callback(emu, F, &info, sizeof(info), data))) {
                 return ret;
@@ -1473,42 +1546,52 @@ EXPORT int my_dl_iterate_phdr(x64emu_t *emu, void* F, void *data) {
     return ret;
 }
 
+void ResetSpecialCaseMainElf32(elfheader_t* h)
+#ifndef BOX32
+{ }
+#else
+ ;
+#endif
 void ResetSpecialCaseMainElf(elfheader_t* h)
 {
+    if(box64_is32bits) {
+        ResetSpecialCaseMainElf32(h);
+        return;
+    }
     Elf64_Sym *sym = NULL;
     for (size_t i=0; i<h->numDynSym; ++i) {
-        if(h->DynSym[i].st_info == 17) {
-            sym = h->DynSym+i;
+        if(h->DynSym._64[i].st_info == 17) {
+            sym = h->DynSym._64+i;
             const char * symname = h->DynStr+sym->st_name;
             if(strcmp(symname, "_IO_2_1_stderr_")==0 && ((void*)sym->st_value+h->delta)) {
                 memcpy((void*)sym->st_value+h->delta, stderr, sym->st_size);
                 my__IO_2_1_stderr_ = (void*)sym->st_value+h->delta;
-                printf_log(LOG_DEBUG, "BOX64: Set @_IO_2_1_stderr_ to %p\n", my__IO_2_1_stderr_);
+                printf_log(LOG_DEBUG, "Set @_IO_2_1_stderr_ to %p\n", my__IO_2_1_stderr_);
             } else
             if(strcmp(symname, "_IO_2_1_stdin_")==0 && ((void*)sym->st_value+h->delta)) {
                 memcpy((void*)sym->st_value+h->delta, stdin, sym->st_size);
                 my__IO_2_1_stdin_ = (void*)sym->st_value+h->delta;
-                printf_log(LOG_DEBUG, "BOX64: Set @_IO_2_1_stdin_ to %p\n", my__IO_2_1_stdin_);
+                printf_log(LOG_DEBUG, "Set @_IO_2_1_stdin_ to %p\n", my__IO_2_1_stdin_);
             } else
             if(strcmp(symname, "_IO_2_1_stdout_")==0 && ((void*)sym->st_value+h->delta)) {
                 memcpy((void*)sym->st_value+h->delta, stdout, sym->st_size);
                 my__IO_2_1_stdout_ = (void*)sym->st_value+h->delta;
-                printf_log(LOG_DEBUG, "BOX64: Set @_IO_2_1_stdout_ to %p\n", my__IO_2_1_stdout_);
+                printf_log(LOG_DEBUG, "Set @_IO_2_1_stdout_ to %p\n", my__IO_2_1_stdout_);
             } else
             if(strcmp(symname, "_IO_stderr_")==0 && ((void*)sym->st_value+h->delta)) {
                 memcpy((void*)sym->st_value+h->delta, stderr, sym->st_size);
                 my__IO_2_1_stderr_ = (void*)sym->st_value+h->delta;
-                printf_log(LOG_DEBUG, "BOX64: Set @_IO_stderr_ to %p\n", my__IO_2_1_stderr_);
+                printf_log(LOG_DEBUG, "Set @_IO_stderr_ to %p\n", my__IO_2_1_stderr_);
             } else
             if(strcmp(symname, "_IO_stdin_")==0 && ((void*)sym->st_value+h->delta)) {
                 memcpy((void*)sym->st_value+h->delta, stdin, sym->st_size);
                 my__IO_2_1_stdin_ = (void*)sym->st_value+h->delta;
-                printf_log(LOG_DEBUG, "BOX64: Set @_IO_stdin_ to %p\n", my__IO_2_1_stdin_);
+                printf_log(LOG_DEBUG, "Set @_IO_stdin_ to %p\n", my__IO_2_1_stdin_);
             } else
             if(strcmp(symname, "_IO_stdout_")==0 && ((void*)sym->st_value+h->delta)) {
                 memcpy((void*)sym->st_value+h->delta, stdout, sym->st_size);
                 my__IO_2_1_stdout_ = (void*)sym->st_value+h->delta;
-                printf_log(LOG_DEBUG, "BOX64: Set @_IO_stdout_ to %p\n", my__IO_2_1_stdout_);
+                printf_log(LOG_DEBUG, "Set @_IO_stdout_ to %p\n", my__IO_2_1_stdout_);
             }
         }
     }
@@ -1564,12 +1647,12 @@ void ElfAttachLib(elfheader_t* head, library_t* lib)
     head->lib = lib;
 }
 
-Elf64_Sym* ElfLocateSymbol(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+static Elf64_Sym* ElfLocateSymbol(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
 {
-    Elf64_Sym* sym = ElfLookup(head, symname, *ver, *vername, local, *veropt);
+    Elf64_Sym* sym = ElfLookup64(head, symname, *ver, *vername, local, *veropt);
     if(!sym) return NULL;
     if(head->VerSym && !*veropt) {
-        int idx = ((uintptr_t)sym - (uintptr_t)head->DynSym)/sizeof(Elf64_Sym);
+        int idx = ((uintptr_t)sym - (uintptr_t)head->DynSym._64)/sizeof(Elf64_Sym);
         int version = ((Elf64_Half*)((uintptr_t)head->VerSym+head->delta))[idx];
         if(version!=-1) version &=0x7fff;
         const char* symvername = GetSymbolVersion(head, version);
@@ -1589,7 +1672,13 @@ Elf64_Sym* ElfLocateSymbol(elfheader_t* head, uintptr_t *offs, uintptr_t *end, c
     return sym;
 }
 
-void* ElfGetLocalSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+void* ElfGetLocalSymbolStartEnd32(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+#ifndef BOX32
+{ return NULL; }
+#else
+ ;
+#endif
+void* ElfGetLocalSymbolStartEnd64(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
 {
     Elf64_Sym* sym = ElfLocateSymbol(head, offs, end, symname, ver, vername, local, veropt);
     if(!sym) return NULL;
@@ -1599,7 +1688,18 @@ void* ElfGetLocalSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *e
     if(end) *end = sym->st_value + head->delta + sym->st_size;
     return sym;
 }
-void* ElfGetGlobalSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+void* ElfGetLocalSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+{
+    return box64_is32bits?ElfGetLocalSymbolStartEnd32(head, offs, end, symname, ver, vername, local, veropt):ElfGetLocalSymbolStartEnd64(head, offs, end, symname, ver, vername, local, veropt);
+}
+
+void* ElfGetGlobalSymbolStartEnd32(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+#ifndef BOX32
+{ return NULL; }
+#else
+ ;
+#endif
+void* ElfGetGlobalSymbolStartEnd64(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
 {
     Elf64_Sym* sym = ElfLocateSymbol(head, offs, end, symname, ver, vername, local, veropt);
     if(!sym) return NULL;
@@ -1609,7 +1709,18 @@ void* ElfGetGlobalSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *
     if(end) *end = sym->st_value + head->delta + sym->st_size;
     return sym;
 }
-void* ElfGetWeakSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+void* ElfGetGlobalSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+{
+    return box64_is32bits?ElfGetGlobalSymbolStartEnd32(head, offs, end, symname, ver, vername, local, veropt):ElfGetGlobalSymbolStartEnd64(head, offs, end, symname, ver, vername, local, veropt);
+}
+
+void* ElfGetWeakSymbolStartEnd32(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+#ifndef BOX32
+{ return NULL; }
+#else
+ ;
+#endif
+void* ElfGetWeakSymbolStartEnd64(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
 {
     Elf64_Sym* sym = ElfLocateSymbol(head, offs, end, symname, ver, vername, local, veropt);
     if(!sym) return NULL;
@@ -1619,15 +1730,49 @@ void* ElfGetWeakSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *en
     if(end) *end = sym->st_value + head->delta + sym->st_size;
     return sym;
 }
-int ElfGetSymTabStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname)
+void* ElfGetWeakSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
 {
-    Elf64_Sym* sym = ElfSymTabLookup(head, symname);
+    return box64_is32bits?ElfGetWeakSymbolStartEnd32(head, offs, end, symname, ver, vername, local, veropt):ElfGetWeakSymbolStartEnd64(head, offs, end, symname, ver, vername, local, veropt);
+}
+
+void* ElfGetSymbolStartEnd32(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+#ifndef BOX32
+{ return NULL; }
+#else
+ ;
+#endif
+void* ElfGetSymbolStartEnd64(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+{
+    Elf64_Sym* sym = ElfLocateSymbol(head, offs, end, symname, ver, vername, local, veropt);
+    if(!sym) return NULL;
+    if(offs) *offs = sym->st_value + head->delta;
+    if(end) *end = sym->st_value + head->delta + sym->st_size;
+    return sym;
+}
+void* ElfGetSymbolStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname, int* ver, const char** vername, int local, int* veropt)
+{
+    return box64_is32bits?ElfGetSymbolStartEnd32(head, offs, end, symname, ver, vername, local, veropt):ElfGetSymbolStartEnd64(head, offs, end, symname, ver, vername, local, veropt);
+}
+
+int ElfGetSymTabStartEnd32(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname)
+#ifndef BOX32
+{ return 0; }
+#else
+ ;
+#endif
+int ElfGetSymTabStartEnd64(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname)
+{
+    Elf64_Sym* sym = ElfSymTabLookup64(head, symname);
     if(!sym) return 0;
     if(!sym->st_shndx) return 0;
     if(!sym->st_size) return 0; //needed?
     if(offs) *offs = sym->st_value + head->delta;
     if(end) *end = sym->st_value + head->delta + sym->st_size;
     return 1;
+}
+int ElfGetSymTabStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, const char* symname)
+{
+    return box64_is32bits?ElfGetSymTabStartEnd32(head, offs, end, symname):ElfGetSymTabStartEnd64(head, offs, end, symname);
 }
 
 typedef struct search_symbol_s{
@@ -1692,17 +1837,16 @@ void* GetNativeSymbolUnversioned(void* lib, const char* name)
     search_symbol_t s;
     s.name = name;
     s.addr = NULL;
-    if(lib) 
+    if(lib)
         s.lib = lib;
-    else 
+    else
         s.lib = my_context->box64lib;
     printf_log(LOG_INFO, "Look for %s in loaded elfs\n", name);
     dl_iterate_phdr(dl_iterate_phdr_findsymbol, &s);
     return s.addr;
 }
 
-uintptr_t pltResolver = ~0LL;
-EXPORT void PltResolver(x64emu_t* emu)
+EXPORT void PltResolver64(x64emu_t* emu)
 {
     uintptr_t addr = Pop64(emu);
     int slot = (int)Pop64(emu);
@@ -1710,13 +1854,13 @@ EXPORT void PltResolver(x64emu_t* emu)
     library_t* lib = h->lib;
     lib_t* local_maplib = GetMaplib(lib);
     int deepbind = GetDeepBind(lib);
-    printf_dump(LOG_DEBUG, "PltResolver: Addr=%p, Slot=%d Return=%p(%s): elf is %s (VerSym=%p, deepbind=%d, local_maplib=%p) func param: %p, %p...\n", (void*)addr, slot, *(void**)(R_RSP), getAddrFunctionName(*(uintptr_t*)R_RSP),h->name, h->VerSym, deepbind, local_maplib, (void*)R_RDI, (void*)R_RSI);
+    printf_dump(LOG_DEBUG, "PltResolver64: Addr=%p, Slot=%d Return=%p(%s): elf is %s (VerSym=%p, deepbind=%d, local_maplib=%p) func param: %p, %p...\n", (void*)addr, slot, *(void**)(R_RSP), getAddrFunctionName(*(uintptr_t*)R_RSP),h->name, h->VerSym, deepbind, local_maplib, (void*)R_RDI, (void*)R_RSI);
 
     Elf64_Rela * rel = (Elf64_Rela *)(h->jmprel + h->delta) + slot;
 
-    Elf64_Sym *sym = &h->DynSym[ELF64_R_SYM(rel->r_info)];
+    Elf64_Sym *sym = &h->DynSym._64[ELF64_R_SYM(rel->r_info)];
     int bind = ELF64_ST_BIND(sym->st_info);
-    const char* symname = SymName(h, sym);
+    const char* symname = SymName64(h, sym);
     int version = h->VerSym?((Elf64_Half*)((uintptr_t)h->VerSym+h->delta))[ELF64_R_SYM(rel->r_info)]:-1;
     if(version!=-1) version &= 0x7fff;
     const char* vername = GetSymbolVersion(h, version);
@@ -1728,7 +1872,7 @@ EXPORT void PltResolver(x64emu_t* emu)
 
     Elf64_Sym *elfsym = NULL;
     if(bind==STB_LOCAL) {
-        elfsym = ElfDynSymLookup(h, symname);
+        elfsym = ElfDynSymLookup64(h, symname);
         if(elfsym && elfsym->st_shndx) {
             offs = elfsym->st_value + h->delta;
             end = offs + elfsym->st_size;
@@ -1773,4 +1917,34 @@ EXPORT void PltResolver(x64emu_t* emu)
 
     // jmp to function
     R_RIP = offs;
+}
+
+const char* getAddrFunctionName(uintptr_t addr)
+{
+    static char rets[8][1000];
+    static int idx = 0;
+    char* ret = rets[idx];
+    idx = (idx + 1) & 7;
+    uint64_t sz = 0;
+    uintptr_t start = 0;
+    elfheader_t* elf = FindElfAddress(my_context, addr);
+    const char* symbname = FindNearestSymbolName(elf, (void*)addr, &start, &sz);
+    if (!sz) sz = 0x100; // arbitrary value...
+    if (symbname && addr >= start && (addr < (start + sz) || !sz)) {
+        if (symbname[0] == '\0')
+            sprintf(ret, "%s + 0x%lx + 0x%lx", ElfName(elf), start - (uintptr_t)GetBaseAddress(elf), addr - start);
+        else if (addr == start)
+            sprintf(ret, "%s/%s", ElfName(elf), symbname);
+        else
+            sprintf(ret, "%s/%s + 0x%lx", ElfName(elf), symbname, addr - start);
+    } else {
+        if (elf) {
+            sprintf(ret, "%s + 0x%lx", ElfName(elf), addr - (uintptr_t)GetBaseAddress(elf));
+        } else if(IsAddrFileMapped(addr, &symbname, &start)) {
+            sprintf(ret, "%s+0x%lx", symbname, addr-start);
+        } else {
+            sprintf(ret, "???");
+        }
+    }
+    return ret;
 }

@@ -16,6 +16,7 @@
 #include "librarian.h"
 #include "callback.h"
 #include "myalign.h"
+#include "build_info.h"
 
 //extern char* libvulkan;
 
@@ -28,8 +29,9 @@ typedef void(*vFpUp_t)      (void*, uint64_t, void*);
 
 #include "generated/wrappedvulkantypes.h"
 
+// track current instance and device.
 #define ADDED_STRUCT()                              \
-    void* currentInstance;  // track current instance. If using multiple instance, that will be a mess!
+    void* currentInstance;
 
 #define ADDED_SUPER 1
 #include "wrappercallback.h"
@@ -59,7 +61,7 @@ static symbol1_t* getWrappedSymbol(x64emu_t* emu, const char* rname, int warning
     }
     if(k==kh_end(emu->context->vkwrappers)) {
         if(warning) {
-            printf_dlsym(LOG_DEBUG, "%p\n", NULL);
+            printf_dlsym_prefix(0, LOG_DEBUG, "%p\n", NULL);
             printf_dlsym(LOG_INFO, "Warning, no wrapper for %s\n", rname);
         }
         return NULL;
@@ -78,7 +80,7 @@ static void* resolveSymbol(x64emu_t* emu, void* symbol, const char* rname)
         s->resolved = 1;
     }
     void* ret = (void*)s->addr;
-    printf_dlsym(LOG_DEBUG, "%p (%p)\n", ret, symbol);
+    printf_dlsym_prefix(0, LOG_DEBUG, "%p (%p)\n", ret, symbol);
     return ret;
 }
 
@@ -90,12 +92,15 @@ EXPORT void* my_vkGetDeviceProcAddr(x64emu_t* emu, void* device, void* name)
     printf_dlsym(LOG_DEBUG, "Calling my_vkGetDeviceProcAddr(%p, \"%s\") => ", device, rname);
     if(!emu->context->vkwrappers)
         fillVulkanProcWrapper(emu->context);
+    // not caching Device functions
+    /*
     symbol1_t* s = getWrappedSymbol(emu, rname, 0);
     if(s && s->resolved) {
         void* ret = (void*)s->addr;
-        printf_dlsym(LOG_DEBUG, "%p (cached)\n", ret);
+        printf_dlsym_prefix(0, LOG_DEBUG, "%p (cached)\n", ret);
         return ret;
     }
+    */
     k = kh_get(symbolmap, emu->context->vkmymap, rname);
     int is_my = (k==kh_end(emu->context->vkmymap))?0:1;
     void* symbol = my->vkGetDeviceProcAddr(device, name);
@@ -111,7 +116,7 @@ EXPORT void* my_vkGetDeviceProcAddr(x64emu_t* emu, void* device, void* name)
         #undef GO
     }
     if(!symbol) {
-        printf_dlsym(LOG_DEBUG, "%p\n", NULL);
+        printf_dlsym_prefix(0, LOG_DEBUG, "%p\n", NULL);
         return NULL;    // easy
     }
     return resolveSymbol(emu, symbol, rname);
@@ -126,13 +131,14 @@ EXPORT void* my_vkGetInstanceProcAddr(x64emu_t* emu, void* instance, void* name)
     if(!emu->context->vkwrappers)
         fillVulkanProcWrapper(emu->context);
     if(instance!=my->currentInstance) {
+        printf_dlsym(LOG_DEBUG, "(switch instance from %p to %p) ", my->currentInstance, instance);
         my->currentInstance = instance;
         updateInstance(emu, my);
     }
     symbol1_t* s = getWrappedSymbol(emu, rname, 0);
     if(s && s->resolved) {
         void* ret = (void*)s->addr;
-        printf_dlsym(LOG_DEBUG, "%p (cached)\n", ret);
+        printf_dlsym_prefix(0, LOG_DEBUG, "%p (cached)\n", ret);
         return ret;
     }
     // check if vkprocaddress is filled, and search for lib and fill it if needed
@@ -141,7 +147,7 @@ EXPORT void* my_vkGetInstanceProcAddr(x64emu_t* emu, void* instance, void* name)
     int is_my = (k==kh_end(emu->context->vkmymap))?0:1;
     void* symbol = my_context->vkprocaddress(instance, rname);
     if(!symbol) {
-        printf_dlsym(LOG_DEBUG, "%p\n", NULL);
+        printf_dlsym_prefix(0, LOG_DEBUG, "%p\n", NULL);
         return NULL;    // easy
     }
     if(is_my) {
@@ -169,7 +175,7 @@ void* my_GetVkProcAddr(x64emu_t* emu, void* name, void*(*getaddr)(const char*))
     symbol1_t* s = getWrappedSymbol(emu, rname, 0);
     if(s && s->resolved) {
         void* ret = (void*)s->addr;
-        printf_dlsym(LOG_DEBUG, "%p (cached)\n", ret);
+        printf_dlsym_prefix(0, LOG_DEBUG, "%p (cached)\n", ret);
         return ret;
     }
     // check if vkprocaddress is filled, and search for lib and fill it if needed
@@ -232,6 +238,18 @@ typedef struct my_VkXcbSurfaceCreateInfoKHR_s {
     void**      connection;
     int         window;
 } my_VkXcbSurfaceCreateInfoKHR_t;
+
+#define VK_MAX_DRIVER_NAME_SIZE 256
+#define VK_MAX_DRIVER_INFO_SIZE 256
+
+typedef struct my_VkPhysicalDeviceVulkan12Properties_s {
+    int   sType;
+    void* pNext;
+    int   driverID;
+    char  driverName[VK_MAX_DRIVER_NAME_SIZE];
+    char  driverInfo[VK_MAX_DRIVER_INFO_SIZE];
+    uint32_t __others[49];
+} my_VkPhysicalDeviceVulkan12Properties_t;
 
 typedef struct my_VkStruct_s {
     int         sType;
@@ -404,8 +422,8 @@ static void* find_DebugUtilsMessengerCallback_Fct(void* fct)
 
 //#define PRE_INIT if(libGL) {lib->w.lib = dlopen(libGL, RTLD_LAZY | RTLD_GLOBAL); lib->path = box_strdup(libGL);} else
 
-#define PRE_INIT        \
-    if(box64_novulkan)  \
+#define PRE_INIT           \
+    if(BOX64ENV(novulkan)) \
         return -1;
 
 #define CUSTOM_INIT \
@@ -685,6 +703,7 @@ DESTROY(vkDestroyDebugUtilsMessengerEXT)
 
 DESTROY64(vkDestroySurfaceKHR)
 
+CREATE(vkCreateSamplerYcbcrConversionKHR)
 DESTROY64(vkDestroySamplerYcbcrConversionKHR)
 
 DESTROY64(vkDestroyValidationCacheEXT)
@@ -798,3 +817,43 @@ EXPORT void my_vkDestroyDebugReportCallbackEXT(x64emu_t* emu, void* instance, vo
 }
 
 CREATE(vkCreateHeadlessSurfaceEXT)
+
+EXPORT void my_vkGetPhysicalDeviceProperties2(x64emu_t* emu, void* device, void* pProps)
+{
+    my->vkGetPhysicalDeviceProperties2(device, pProps);
+    my_VkStruct_t *p = pProps;
+    while (p != NULL) {
+        // find VkPhysicalDeviceVulkan12Properties
+        // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES = 52
+        if(p->sType == 52) {
+            my_VkPhysicalDeviceVulkan12Properties_t *pp = (my_VkPhysicalDeviceVulkan12Properties_t*)p;
+            strncat(pp->driverInfo, " with " BOX64_BUILD_INFO_STRING, VK_MAX_DRIVER_INFO_SIZE - strlen(pp->driverInfo) - 1);
+            break;
+        }
+        p = p->pNext;
+    }
+}
+
+CREATE(vkCreateIndirectCommandsLayoutEXT)
+CREATE(vkCreateIndirectExecutionSetEXT)
+DESTROY64(vkDestroyIndirectCommandsLayoutEXT)
+DESTROY64(vkDestroyIndirectExecutionSetEXT)
+
+CREATE(vkCreatePipelineBinariesKHR)
+DESTROY64(vkDestroyPipelineBinaryKHR)
+DESTROY(vkReleaseCapturedPipelineDataKHR)
+
+CREATE(vkCreateTensorARM)
+CREATE(vkCreateTensorViewARM)
+DESTROY64(vkDestroyTensorARM)
+DESTROY64(vkDestroyTensorViewARM)
+
+CREATE(vkCreateDataGraphPipelineSessionARM)
+EXPORT int my_vkCreateDataGraphPipelinesARM(x64emu_t* emu, void* device, uint64_t deferredOperation, uint64_t pipelineCache,
+                                             uint32_t createInfoCount, void* pCreateInfos,
+                                             my_VkAllocationCallbacks_t* alloc, void* pPipelines)
+{
+    my_VkAllocationCallbacks_t my_alloc;
+    return my->vkCreateDataGraphPipelinesARM(device, deferredOperation, pipelineCache, createInfoCount, pCreateInfos, find_VkAllocationCallbacks(&my_alloc, alloc), pPipelines);
+}
+DESTROY64(vkDestroyDataGraphPipelineSessionARM)

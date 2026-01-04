@@ -42,7 +42,9 @@ typedef enum {
 typedef enum {
 	d_none = 0,
 	d_add8,
+	d_add8b,	// using 8bits res
 	d_add16,
+	d_add16b,	// using 16bits res
 	d_add32,	// using 64bits res
 	d_add32b,	// using 32bits res
 	d_add64,
@@ -119,14 +121,6 @@ typedef enum {
 	d_ror16,
 	d_ror32,
 	d_ror64,
-	d_dec8i,	// interpreter version, to handle the CF flags that is untouched
-	d_dec16i,
-	d_dec32i,
-	d_dec64i,
-	d_inc8i,
-	d_inc16i,
-	d_inc32i,
-	d_inc64i,
 	d_shrd16,
 	d_shrd32,
 	d_shrd64,
@@ -251,6 +245,12 @@ typedef union {
     } f;
     uint16_t    x16;
 } x87control_t;
+/*
+Precision Controls: 00b = 24bits, 01b=reserved, 10b=53bits and 11b=64bits
+The precision-control bits only affect the results of the following floating-point instructions: FADD, FADDP, FIADD, 
+FSUB, FSUBP, FISUB, FSUBR, FSUBRP, FISUBR, FMUL, FMULP, FIMUL, FDIV, FDIVP, FIDIV, FDIVR, FDIVRP, FIDIVR, 
+and FSQRT.
+*/
 
 typedef union {
 	struct __attribute__ ((__packed__)) {
@@ -319,6 +319,7 @@ typedef union {
 #define R_R13 emu->regs[_R13].q[0]
 #define R_R14 emu->regs[_R14].q[0]
 #define R_R15 emu->regs[_R15].q[0]
+#define R_EIP emu->ip.dword[0]
 #define R_EAX emu->regs[_AX].dword[0]
 #define R_EBX emu->regs[_BX].dword[0]
 #define R_ECX emu->regs[_CX].dword[0]

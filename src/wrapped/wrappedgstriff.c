@@ -13,10 +13,12 @@
 #include "x64emu.h"
 
 const char* gstriffName = "libgstriff-1.0.so.0";
+#define ALTNAME "libgstriff-1.0.so"
+
 #define LIBNAME gstriff
 
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #include "wrappedlib_init.h"

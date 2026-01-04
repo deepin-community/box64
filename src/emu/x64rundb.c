@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <fenv.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,12 +12,12 @@
 #include "debug.h"
 #include "box64stack.h"
 #include "x64emu.h"
-#include "x64run.h"
 #include "x64emu_private.h"
 #include "x64run_private.h"
 #include "x64primop.h"
 #include "x64trace.h"
 #include "x87emu_private.h"
+#include "x87emu_setround.h"
 #include "box64context.h"
 #include "bridge.h"
 
@@ -35,6 +36,7 @@ uintptr_t RunDB(x64emu_t *emu, rex_t rex, uintptr_t addr)
     x64emu_t*emu = test->emu;
     #endif
 
+    int oldround = fpu_setround(emu);
     nextop = F8;
     if(MODREG)
     switch(nextop) {
@@ -128,6 +130,7 @@ uintptr_t RunDB(x64emu_t *emu, rex_t rex, uintptr_t addr)
         break;
 
     default:
+        fesetround(oldround);
         return 0;
     } else
         switch((nextop>>3)&7) {
@@ -172,14 +175,16 @@ uintptr_t RunDB(x64emu_t *emu, rex_t rex, uintptr_t addr)
                 break;
             case 7: /* FSTP tbyte */
                 GETET(0);
-                if(ST0.q!=STld(0).uref)
-                    D2LD(&ST0.d, ED);
-                else
+                if(STld(0).uref && (ST0.q==STld(0).uref))
                     memcpy(ED, &STld(0).ld, 10);
+                else
+                    D2LD(&ST0.d, ED);
                 fpu_do_pop(emu);
                 break;
             default:
+                fesetround(oldround);
                 return 0;
         }
-  return addr;
+    fesetround(oldround);
+    return addr;
 }

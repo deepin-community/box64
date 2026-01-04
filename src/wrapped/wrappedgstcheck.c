@@ -12,16 +12,13 @@
 #include "librarian/library_private.h"
 #include "x64emu.h"
 
-#ifdef ANDROID
-    const char* gstcheckName = "libgstcheck-1.0.so";
-#else
-    const char* gstcheckName = "libgstcheck-1.0.so.0";
-#endif
+const char* gstcheckName = "libgstcheck-1.0.so.0";
+#define ALTNAME "libgstcheck-1.0.so"
 
 #define LIBNAME gstcheck
 
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #include "wrappedlib_init.h"

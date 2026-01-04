@@ -40,6 +40,16 @@
 #endif
 
 #undef GO
+#ifdef BOX32
+#define GO(P, N) int wrapped##N##_init32(library_t* lib, box64context_t *box64); \
+                 void wrapped##N##_fini32(library_t* lib);
+#ifdef STATICBUILD
+#include "library_list_static_32.h"
+#else
+#include "library_list_32.h"
+#endif
+#undef GO
+#endif
 
 #define GO(P, N) {P, wrapped##N##_init, wrapped##N##_fini},
 wrappedlib_t wrappedlibs[] = {
@@ -47,6 +57,17 @@ wrappedlib_t wrappedlibs[] = {
 #include "library_list_static.h"
 #else
 #include "library_list.h"
+#endif
+};
+#undef GO
+#define GO(P, N) {P, wrapped##N##_init32, wrapped##N##_fini32},
+wrappedlib_t wrappedlibs32[] = {
+#ifdef BOX32
+#ifdef STATICBUILD
+#include "library_list_static_32.h"
+#else
+#include "library_list_32.h"
+#endif
 #endif
 };
 #undef GO
@@ -154,6 +175,8 @@ int EmuLib_GetWeak(library_t* lib, const char* name, uintptr_t *offs, uintptr_t 
     void* sym;
     if((sym = ElfGetWeakSymbolStartEnd(lib->e.elf, &start, &end, name, version, vername, local, veropt)))
     {
+        if(asked_size && asked_size!=end-start)
+            return 0;
         *offs = start;
         *sz = end-start;
         *weak = 1;
@@ -192,6 +215,8 @@ int EmuLib_GetGlobal(library_t* lib, const char* name, uintptr_t *offs, uintptr_
     void* sym;
     if((sym = ElfGetGlobalSymbolStartEnd(lib->e.elf, &start, &end, name, version, vername, local, veropt)))
     {
+        if(asked_size && asked_size!=end-start)
+            return 0;
         *offs = start;
         *sz = end-start;
         *weak = 0;
@@ -211,6 +236,8 @@ int EmuLib_GetLocal(library_t* lib, const char* name, uintptr_t *offs, uintptr_t
     void* sym;
     if((sym = ElfGetLocalSymbolStartEnd(lib->e.elf, &start, &end, name, version, vername, local, veropt)))
     {
+        if(asked_size && asked_size!=end-start)
+            return 0;
         *offs = start;
         *sz = end-start;
         *weak = 0;
@@ -232,10 +259,11 @@ int DummyLib_GetLocal(library_t* lib, const char* name, uintptr_t *offs, uintptr
 }
 
 static void initWrappedLib(library_t *lib, box64context_t* context) {
-    int nb = sizeof(wrappedlibs) / sizeof(wrappedlib_t);
+    int nb = (box64_is32bits?sizeof(wrappedlibs32):sizeof(wrappedlibs)) / sizeof(wrappedlib_t);
     for (int i=0; i<nb; ++i) {
-        if(strcmp(lib->name, wrappedlibs[i].name)==0) {
-            if(wrappedlibs[i].init(lib, context)) {
+        wrappedlib_t* w = box64_is32bits?(&wrappedlibs32[i]):(&wrappedlibs[i]);
+        if(strcmp(lib->name, w->name)==0) {
+            if(w->init(lib, context)) {
                 // error!
                 const char* error_str = dlerror();
                 if(error_str)   // don't print the message if there is no error string from last error
@@ -243,7 +271,7 @@ static void initWrappedLib(library_t *lib, box64context_t* context) {
                 return; // non blocker...
             }
             printf_dump(LOG_INFO, "Using native(wrapped) %s\n", lib->name);
-            lib->fini = wrappedlibs[i].fini;
+            lib->fini = w->fini;
             lib->getglobal = WrappedLib_GetGlobal;
             lib->getweak = WrappedLib_GetWeak;
             lib->getlocal = WrappedLib_GetLocal;
@@ -258,13 +286,13 @@ static void initWrappedLib(library_t *lib, box64context_t* context) {
             linkmap_t *lm = addLinkMapLib(lib);
             if(!lm) {
                 // Crashed already
-                printf_dump(LOG_DEBUG, "Failure to add lib %s linkmap\n", lib->name);
+                printf_dlsym_dump(LOG_DEBUG, "Failure to add lib %s linkmap\n", lib->name);
                 break;
             }
             struct link_map real_lm;
             #ifndef ANDROID
             if(dlinfo(lib->w.lib, RTLD_DI_LINKMAP, &real_lm)) {
-                printf_dump(LOG_DEBUG, "Failed to dlinfo lib %s\n", lib->name);
+                printf_dlsym_dump(LOG_DEBUG, "Failed to dlinfo lib %s\n", lib->name);
             }
             #endif
             lm->l_addr = real_lm.l_addr;
@@ -286,7 +314,7 @@ static int loadEmulatedLib(const char* libname, library_t *lib, box64context_t* 
         }
         elfheader_t *elf_header = LoadAndCheckElfHeader(f, libname, 0);
         if(!elf_header) {
-            printf_dump(LOG_DEBUG, "Error: reading elf header of %s\n", libname);    // this one can be too alarming...
+            printf_dlsym_dump(LOG_DEBUG, "Error: reading elf header of %s\n", libname);    // this one can be too alarming...
             fclose(f);
             return 0;
         }
@@ -328,31 +356,37 @@ static int loadEmulatedLib(const char* libname, library_t *lib, box64context_t* 
         }
 
         printf_dump(LOG_INFO, "Using emulated %s\n", libname);
+        int env_changed = 0;
         #ifdef DYNAREC
-        if(libname && box64_dynarec_bleeding_edge && strstr(libname, "libmonobdwgc-2.0.so")) {
+        if(libname && BOX64ENV(dynarec_bleeding_edge) && strstr(libname, "libmonobdwgc-2.0.so")) {
             printf_dump(LOG_INFO, "MonoBleedingEdge detected, disable Dynarec BigBlock and enable Dynarec StrongMem\n");
-            box64_dynarec_bigblock = 0;
-            box64_dynarec_strongmem = 1;
+            SET_BOX64ENV(dynarec_bigblock, 0);
+            SET_BOX64ENV(dynarec_strongmem, 1);
+            env_changed = 1;
         }
-        if(libname && box64_dynarec_tbb && strstr(libname, "libtbb.so")) {
+        if(libname && BOX64ENV(dynarec_tbb) && strstr(libname, "libtbb.so")) {
             printf_dump(LOG_INFO, "libtbb detected, enable Dynarec StrongMem\n");
-            box64_dynarec_strongmem = 3;
+            SET_BOX64ENV(dynarec_strongmem, 1);
+            env_changed = 1;
         }
         #endif
-        if(libname && box64_jvm && strstr(libname, "libjvm.so")) {
+        if(libname && BOX64ENV(jvm) && strstr(libname, "libjvm.so")) {
             #ifdef DYNAREC
             printf_dump(LOG_INFO, "libjvm detected, disable Dynarec BigBlock and enable Dynarec StrongMem, hide SSE 4.2\n");
-            box64_dynarec_bigblock = 0;
-            box64_dynarec_strongmem = 1;
+            SET_BOX64ENV(dynarec_bigblock, 0);
+            SET_BOX64ENV(dynarec_strongmem, 1);
             #else
             printf_dump(LOG_INFO, "libjvm detected, hide SSE 4.2\n");
             #endif
-            box64_sse42 = 0;
+            SET_BOX64ENV(sse42, 0);
+            env_changed = 1;
         }
-        if(libname && box64_libcef && strstr(libname, "libcef.so")) {
-            printf_dump(LOG_INFO, "libcef detected, using malloc_hack_2\n");
-            box64_malloc_hack = 2;
+        if(libname && BOX64ENV(libcef) && strstr(libname, "libcef.so")) {
+            printf_dump(LOG_INFO, "libcef detected, using malloc_hack=2\n");
+            SET_BOX64ENV(malloc_hack, 2);
+            env_changed = 1;
         }
+        if (env_changed) PrintEnvVariables(&box64env, LOG_INFO);
         return 1;
     }
     return 0;
@@ -362,7 +396,7 @@ static void initEmulatedLib(const char* path, library_t *lib, box64context_t* co
 {
     char libname[MAX_PATH];
     strcpy(libname, path);
-    int found = FileIsX64ELF(libname);
+    int found = box64_is32bits?FileIsX86ELF(libname):FileIsX64ELF(libname);
     if(found)
         if(loadEmulatedLib(libname, lib, context, verneeded))
             return;
@@ -371,14 +405,14 @@ static void initEmulatedLib(const char* path, library_t *lib, box64context_t* co
         {
             strcpy(libname, context->box64_ld_lib.paths[i]);
             strcat(libname, path);
-            if(FileIsX64ELF(libname))
+            if(box64_is32bits?FileIsX86ELF(libname):FileIsX64ELF(libname))
                 if(loadEmulatedLib(libname, lib, context, verneeded))
                     return;
             // also try x86_64 variant
             strcpy(libname, context->box64_ld_lib.paths[i]);
-            strcat(libname, "x86_64/");
+            strcat(libname, box64_is32bits?"i386/":"x86_64/");
             strcat(libname, path);
-            if(FileIsX64ELF(libname))
+            if(box64_is32bits?FileIsX86ELF(libname):FileIsX64ELF(libname))
                 if(loadEmulatedLib(libname, lib, context, verneeded))
                     return;            
         }
@@ -405,12 +439,20 @@ static const char* essential_libs[] = {
     "libxcb-image.so.0", "libxcb-keysyms.so.1", "libxcb-xtest.so.0", "libxcb-glx.so.0", "libxcb-dri2.so.0", "libxcb-dri3.so.0",
     "libXtst.so.6", "libXt.so.6", "libXcomposite.so.1", "libXdamage.so.1", "libXmu.so.6", "libxkbcommon.so.0", 
     "libxkbcommon-x11.so.0", "libpulse-simple.so.0", "libpulse.so.0", "libvulkan.so.1", "libvulkan.so",
-    "ld-linux-x86-64.so.2", "crashhandler.so", "libtcmalloc_minimal.so.0", "libtcmalloc_minimal.so.4", "libanl.so.1"
+    "ld-linux-x86-64.so.2", "crashhandler.so", "libtcmalloc_minimal.so.0", "libtcmalloc_minimal.so.4", "libanl.so.1",
+    "ld-linux.so.2", "ld-linux.so.3", "libthread_db.so.1"
+};
+static const char* essential_libs_egl[] = {
+    "libEGL.so", "libGLESv2.so"
 };
 static int isEssentialLib(const char* name) {
     for (unsigned int i=0; i<sizeof(essential_libs)/sizeof(essential_libs[0]); ++i)
         if(!strcmp(name, essential_libs[i]))
             return 1;
+    if(BOX64ENV(wrap_egl))
+        for (unsigned int i=0; i<sizeof(essential_libs_egl)/sizeof(essential_libs_egl[0]); ++i)
+            if(!strcmp(name, essential_libs_egl[i]))
+                return 1;
     return 0;
 }
 
@@ -427,10 +469,10 @@ static size_t lib_cap = 0;
 
 library_t *NewLibrary(const char* path, box64context_t* context, elfheader_t* verneeded)
 {
-    printf_dump(LOG_DEBUG, "Trying to load \"%s\"\n", path);
+    printf_dlsym_dump(LOG_DEBUG, "Trying to load \"%s\"\n", path);
     //library_t *lib = (library_t*)box_calloc(1, sizeof(library_t));
     if(cur_lib==lib_cap) {
-        lib_brick_t *new_brick = calloc(1, sizeof(lib_brick_t));
+        lib_brick_t *new_brick = box_calloc(1, sizeof(lib_brick_t));
         if(!lib_head)
             cur_brick = lib_head = new_brick;
         else {
@@ -446,14 +488,14 @@ library_t *NewLibrary(const char* path, box64context_t* context, elfheader_t* ve
     lib->path = box_realpath(path, NULL);
     if(!lib->path)
         lib->path = box_strdup(path);
-    if(box64_libGL && !strcmp(path, box64_libGL))
+    if(BOX64ENV(libgl) && !strcmp(path, BOX64ENV(libgl)))
         lib->name = box_strdup("libGL.so.1");
     else
         lib->name = Path2Name(path);
     lib->nbdot = NbDot(lib->name);
     lib->type = LIB_UNNKNOW;
-    printf_dump(LOG_DEBUG, "Simplified name is \"%s\"\n", lib->name);
-    if(box64_nopulse) {
+    printf_dlsym_dump(LOG_DEBUG, "Simplified name is \"%s\"\n", lib->name);
+    if(BOX64ENV(nopulse)) {
         if(strstr(lib->name, "libpulse.so")==lib->name || strstr(lib->name, "libpulse-simple.so")==lib->name) {
             box_free(lib->name);
             box_free(lib->path);
@@ -462,7 +504,7 @@ library_t *NewLibrary(const char* path, box64context_t* context, elfheader_t* ve
             return NULL;
         }
     }
-    if(box64_novulkan) {
+    if(BOX64ENV(novulkan)) {
         if(strstr(lib->name, "libvulkan.so")==lib->name) {
             box_free(lib->name);
             box_free(lib->path);
@@ -473,9 +515,9 @@ library_t *NewLibrary(const char* path, box64context_t* context, elfheader_t* ve
     }
     int notwrapped = FindInCollection(lib->name, &context->box64_emulated_libs);
     int essential = isEssentialLib(lib->name);
-    if(!notwrapped && box64_prefer_emulated && !essential)
+    if(!notwrapped && BOX64ENV(prefer_emulated) && !essential)
         notwrapped = 1;
-    int precise = (!box64_prefer_wrapped && !essential && path && strchr(path, '/'))?1:0;
+    int precise = (!BOX64ENV(prefer_wrapped) && !essential && path && strchr(path, '/'))?1:0;
     if(!notwrapped && precise && strstr(path, "libtcmalloc_minimal.so"))
         precise = 0;    // allow native version for tcmalloc_minimum
     /*
@@ -582,7 +624,7 @@ void Free1Library(library_t **the_lib, x64emu_t* emu)
 
     FiniLibrary(lib, emu);
 
-    printf_dump(LOG_DEBUG, "Free1Library %s\n", lib->name?:"???");
+    printf_dlsym_dump(LOG_DEBUG, "Free1Library %s\n", lib->name?:"???");
     // remove lib from maplib/local_maplib...
     if(my_context) {
         MapLibRemoveLib(my_context->maplib, lib);
@@ -673,7 +715,7 @@ int IsSameLib(library_t* lib, const char* path)
             ret=1;
     } else {
         char rpath[PATH_MAX];
-        box_realpath(path, rpath);
+        (void) box_realpath(path, rpath);
         if(!strcmp(rpath, lib->path))
             ret=1;
         if(lib->type==LIB_EMULATED && lib->e.elf->path && !strcmp(lib->e.elf->path, rpath)) {
@@ -789,10 +831,10 @@ static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uint
         if(lib->w.altmy)
             strcpy(buff, lib->w.altmy);
         else
-            strcpy(buff, "my_");
+            strcpy(buff, box64_is32bits?"my32_":"my_");
         strcat(buff, name);
         #ifdef STATICBUILD
-        symbol = kh_value(lib->w.mydatamap, k).addr;
+        symbol = (void*)kh_value(lib->w.mydatamap, k).addr;
         #else
         symbol = dlsym(my_context->box64lib, buff);
         #endif
@@ -814,9 +856,10 @@ static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uint
 }
 static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, uintptr_t *addr, uintptr_t *size, int* weak)
 {
+    const khint_t hash = kh_hash(symbolmap, name);
     void* symbol;
     // check in mysymbolmap
-    khint_t k = kh_get(symbolmap, lib->w.mysymbolmap, name);
+    khint_t k = kh_get_with_hash(symbolmap, lib->w.mysymbolmap, name, hash);
     if (k!=kh_end(lib->w.mysymbolmap)) {
         symbol1_t *s = &kh_value(lib->w.mysymbolmap, k);
         if(!s->resolved) {
@@ -824,7 +867,7 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
             if(lib->w.altmy)
                 strcpy(buff, lib->w.altmy);
             else
-                strcpy(buff, "my_");
+                strcpy(buff, box64_is32bits?"my32_":"my_");
             strcat(buff, name);
             #ifdef STATICBUILD
             symbol = (void*)s->addr;
@@ -844,7 +887,7 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
         return 1;
     }
     // check in stsymbolmap (return struct...)
-    k = kh_get(symbolmap, lib->w.stsymbolmap, name);
+    k = kh_get_with_hash(symbolmap, lib->w.stsymbolmap, name, hash);
     if (k!=kh_end(lib->w.stsymbolmap)) {
         symbol1_t *s = &kh_value(lib->w.stsymbolmap, k);
         if(!s->resolved) {
@@ -852,7 +895,7 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
             if(lib->w.altmy)
                 strcpy(buff, lib->w.altmy);
             else
-                strcpy(buff, "my_");
+                strcpy(buff, box64_is32bits?"my32_":"my_");
             strcat(buff, name);
             #ifdef STATICBUILD
             symbol = (void*)s->addr;
@@ -863,7 +906,7 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
                 printf_log(LOG_NONE, "Warning, function %s not found\n", buff);
                 return 0;
             }
-            s->addr = AddBridge(lib->w.bridge, s->w, symbol, sizeof(void*), name);
+            s->addr = AddBridge(lib->w.bridge, s->w, symbol, box64_is32bits?4:sizeof(void*), name);
             s->resolved = 1;
         }
         *addr = s->addr;
@@ -872,7 +915,7 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
         return 1;
     }
     // check in symbolmap
-    k = kh_get(symbolmap, lib->w.symbolmap, name);
+    k = kh_get_with_hash(symbolmap, lib->w.symbolmap, name, hash);
     if (k!=kh_end(lib->w.symbolmap)) {
         symbol1_t *s = &kh_value(lib->w.symbolmap, k);
         if(!s->resolved) {
@@ -909,7 +952,7 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
     }
     if(!noweak) {
         // check in wmysymbolmap
-        khint_t k = kh_get(symbolmap, lib->w.wmysymbolmap, name);
+        khint_t k = kh_get_with_hash(symbolmap, lib->w.wmysymbolmap, name, hash);
         if (k!=kh_end(lib->w.wmysymbolmap)) {
             symbol1_t *s = &kh_value(lib->w.wmysymbolmap, k);
             if(!s->resolved) {
@@ -917,7 +960,7 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
                 if(lib->w.altmy)
                     strcpy(buff, lib->w.altmy);
                 else
-                    strcpy(buff, "my_");
+                    strcpy(buff, box64_is32bits?"my32_":"my_");
                 strcat(buff, name);
                 #ifdef STATICBUILD
                 symbol = (void*)s->addr;
@@ -936,7 +979,7 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
             *weak = 1;
             return 1;
         }
-        k = kh_get(symbolmap, lib->w.wsymbolmap, name);
+        k = kh_get_with_hash(symbolmap, lib->w.wsymbolmap, name, hash);
         if (k!=kh_end(lib->w.wsymbolmap)) {
             symbol1_t *s = &kh_value(lib->w.wsymbolmap, k);
             if(!s->resolved) {
@@ -973,7 +1016,9 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
         }
     }
     // check in symbol2map
-    k = kh_get(symbol2map, lib->w.symbol2map, name);
+    // 
+    // NOTE: symbol2map & symbolmap share the same hash function, so we can use the same hash
+    k = kh_get_with_hash(symbol2map, lib->w.symbol2map, name, hash);
     if (k!=kh_end(lib->w.symbol2map))  {
         symbol2_t *s = &kh_value(lib->w.symbol2map, k);
         if(!noweak || !s->weak)
@@ -1074,6 +1119,64 @@ int GetDeepBind(library_t* lib)
     return lib->deepbind;
 }
 
+#ifdef BOX32
+linkmap32_t* getLinkMapLib32(library_t* lib)
+{
+    linkmap32_t* lm = my_context->linkmap32;
+    while(lm) {
+        if(lm->l_lib == lib)
+            return lm;
+        lm = (linkmap32_t*)from_ptrv(lm->l_next);
+    }
+    return NULL;
+}
+linkmap32_t* getLinkMapElf32(elfheader_t* h)
+{
+    linkmap32_t* lm = my_context->linkmap32;
+    while(lm) {
+        if(lm->l_lib && lm->l_lib->type==LIB_EMULATED && lm->l_lib->e.elf == h)
+            return lm;
+        lm = (linkmap32_t*)from_ptrv(lm->l_next);
+    }
+    return NULL;
+}
+linkmap32_t* addLinkMapLib32(library_t* lib)
+{
+    if(!my_context->linkmap32) {
+        my_context->linkmap32 = (linkmap32_t*)actual_calloc(1, sizeof(linkmap32_t));
+        my_context->linkmap32->l_lib = lib;
+        return my_context->linkmap32;
+    }
+    linkmap32_t* lm = my_context->linkmap32;
+    while(lm->l_next)
+        lm = (linkmap32_t*)from_ptrv(lm->l_next);
+    lm->l_next = to_ptrv(actual_calloc(1, sizeof(linkmap32_t)));
+    linkmap32_t* l_next = (linkmap32_t*)from_ptrv(lm->l_next);
+    l_next->l_lib = lib;
+    l_next->l_prev = to_ptrv(lm);
+    return l_next;
+}
+void removeLinkMapLib32(library_t* lib)
+{
+    linkmap32_t* lm = getLinkMapLib32(lib);
+    if(!lm) return;
+    if(lm->l_next)
+        ((linkmap32_t*)from_ptrv(lm->l_next))->l_prev = lm->l_prev;
+    if(lm->l_prev)
+        ((linkmap32_t*)from_ptrv(lm->l_prev))->l_next = lm->l_next;
+    actual_free(lm);
+}
+
+void AddMainElfToLinkmap32(elfheader_t* elf)
+{
+    linkmap32_t* lm = addLinkMapLib32(NULL);    // main elf will have a null lib link
+
+    lm->l_addr = (Elf32_Addr)to_ptrv(GetElfDelta(elf));
+    lm->l_name = to_cstring(my_context->fullpath);
+    lm->l_ld = to_ptrv(GetDynamicSection(elf));
+}
+#endif
+
 linkmap_t* getLinkMapLib(library_t* lib)
 {
     linkmap_t* lm = my_context->linkmap;
@@ -1097,14 +1200,14 @@ linkmap_t* getLinkMapElf(elfheader_t* h)
 linkmap_t* addLinkMapLib(library_t* lib)
 {
     if(!my_context->linkmap) {
-        my_context->linkmap = (linkmap_t*)box_calloc(1, sizeof(linkmap_t));
+        my_context->linkmap = (linkmap_t*)actual_calloc(1, sizeof(linkmap_t));
         my_context->linkmap->l_lib = lib;
         return my_context->linkmap;
     }
     linkmap_t* lm = my_context->linkmap;
     while(lm->l_next)
         lm = lm->l_next;
-    lm->l_next = (linkmap_t*)box_calloc(1, sizeof(linkmap_t));
+    lm->l_next = (linkmap_t*)actual_calloc(1, sizeof(linkmap_t));
     lm->l_next->l_lib = lib;
     lm->l_next->l_prev = lm;
     return lm->l_next;
@@ -1117,7 +1220,7 @@ void removeLinkMapLib(library_t* lib)
         lm->l_next->l_prev = lm->l_prev;
     if(lm->l_prev)
         lm->l_prev->l_next = lm->l_next;
-    box_free(lm);
+    actual_free(lm);
 }
 
 void AddMainElfToLinkmap(elfheader_t* elf)
@@ -1131,23 +1234,23 @@ void AddMainElfToLinkmap(elfheader_t* elf)
 
 needed_libs_t* new_neededlib(int n)
 {
-    needed_libs_t* ret = (needed_libs_t*)calloc(1, sizeof(needed_libs_t));
+    needed_libs_t* ret = (needed_libs_t*)box_calloc(1, sizeof(needed_libs_t));
     ret->cap = ret->size = n;
     ret->init_size = n;
-    ret->libs = (library_t**)calloc(n, sizeof(library_t*));
-    ret->names = (char**)calloc(n, sizeof(char*));
+    ret->libs = (library_t**)box_calloc(n, sizeof(library_t*));
+    ret->names = (char**)box_calloc(n, sizeof(char*));
     return ret;
 }
 void free_neededlib(needed_libs_t* needed)
 {
     if(!needed)
         return;
-    free(needed->libs);
-    free(needed->names);
+    box_free(needed->libs);
+    box_free(needed->names);
     needed->libs = NULL;
     needed->names = NULL;
     needed->cap = needed->size = 0;
-    free(needed);
+    box_free(needed);
 }
 void add1_neededlib(needed_libs_t* needed)
 {
@@ -1156,8 +1259,8 @@ void add1_neededlib(needed_libs_t* needed)
     if(needed->size+1<=needed->cap)
         return;
     needed->cap = needed->size+1;
-    needed->libs = (library_t**)realloc(needed->libs, needed->cap*sizeof(library_t*));
-    needed->names = (char**)realloc(needed->names, needed->cap*sizeof(char*));
+    needed->libs = (library_t**)box_realloc(needed->libs, needed->cap*sizeof(library_t*));
+    needed->names = (char**)box_realloc(needed->names, needed->cap*sizeof(char*));
     needed->size++;
     needed->init_size++;
 }
@@ -1172,8 +1275,8 @@ void add1lib_neededlib(needed_libs_t* needed, library_t* lib, const char* name)
     // add it
     if(needed->size==needed->cap) {
         needed->cap = needed->size+1;
-        needed->libs = (library_t**)realloc(needed->libs, needed->cap*sizeof(library_t*));
-        needed->names = (char**)realloc(needed->names, needed->cap*sizeof(char*));
+        needed->libs = (library_t**)box_realloc(needed->libs, needed->cap*sizeof(library_t*));
+        needed->names = (char**)box_realloc(needed->names, needed->cap*sizeof(char*));
     }
     needed->libs[needed->size] = lib;
     needed->names[needed->size] = (char*)name;
@@ -1191,8 +1294,8 @@ void add1lib_neededlib_name(needed_libs_t* needed, library_t* lib, const char* n
     // add it
     if(needed->size==needed->cap) {
         needed->cap = needed->size+1;
-        needed->libs = (library_t**)realloc(needed->libs, needed->cap*sizeof(library_t*));
-        needed->names = (char**)realloc(needed->names, needed->cap*sizeof(char*));
+        needed->libs = (library_t**)box_realloc(needed->libs, needed->cap*sizeof(library_t*));
+        needed->names = (char**)box_realloc(needed->names, needed->cap*sizeof(char*));
     }
     needed->libs[needed->size] = lib;
     needed->names[needed->size] = (char*)name;
@@ -1210,8 +1313,8 @@ void add1libref_neededlib(needed_libs_t* needed, library_t* lib)
     // add it
     if(needed->size==needed->cap) {
         needed->cap = needed->size+4;
-        needed->libs = (library_t**)realloc(needed->libs, needed->cap*sizeof(library_t*));
-        needed->names = (char**)realloc(needed->names, needed->cap*sizeof(char*));
+        needed->libs = (library_t**)box_realloc(needed->libs, needed->cap*sizeof(library_t*));
+        needed->names = (char**)box_realloc(needed->names, needed->cap*sizeof(char*));
     }
     needed->libs[needed->size] = lib;
     needed->names[needed->size] = (char*)lib->name;
@@ -1222,12 +1325,12 @@ needed_libs_t* copy_neededlib(needed_libs_t* needed)
 {
     if(!needed)
         return NULL;
-    needed_libs_t* ret = (needed_libs_t*)calloc(1, sizeof(needed_libs_t));
+    needed_libs_t* ret = (needed_libs_t*)box_calloc(1, sizeof(needed_libs_t));
     ret->cap = needed->cap;
     ret->size = needed->size;
     ret->init_size = needed->init_size;
-    ret->libs = (library_t**)calloc(ret->cap, sizeof(library_t*));
-    ret->names = (char**)calloc(ret->cap, sizeof(char*));
+    ret->libs = (library_t**)box_calloc(ret->cap, sizeof(library_t*));
+    ret->names = (char**)box_calloc(ret->cap, sizeof(char*));
     memcpy(ret->libs, needed->libs, ret->size*sizeof(library_t*));
     memcpy(ret->names, needed->names, ret->size*sizeof(char*));
     return ret;

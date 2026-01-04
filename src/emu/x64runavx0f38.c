@@ -5,14 +5,14 @@
 #include <math.h>
 #include <fenv.h>
 #include <string.h>
-#include <signal.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "x64_signals.h"
+#include "os.h"
 #include "debug.h"
 #include "box64stack.h"
 #include "x64emu.h"
-#include "x64run.h"
 #include "x64emu_private.h"
 #include "x64run_private.h"
 #include "x64primop.h"
@@ -21,7 +21,7 @@
 #include "box64context.h"
 #include "my_cpuid.h"
 #include "bridge.h"
-#include "signals.h"
+#include "emit_signals.h"
 #ifdef DYNAREC
 #include "custommem.h"
 #include "../dynarec/native_lock.h"
@@ -61,24 +61,27 @@ uintptr_t RunAVX_0F38(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
 
         case 0xF2:  /* ANDN Gd, Vd, Ed */
             nextop = F8;
-            if(vex.l) emit_signal(emu, SIGILL, (void*)R_RIP, 0);
+            if(vex.l) EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
+            ResetFlags(emu);
             GETGD;
             GETED(0);
             GETVD;
             if(rex.w)
                 GD->q[0] = ED->q[0] & ~VD->q[0];
-            else {
-                if(MODREG)
-                    GD->q[0] = ED->dword[0] & ~VD->dword[0];
-                else
-                    GD->dword[0] = ED->dword[0] & ~VD->dword[0];
-            }
+            else
+                GD->q[0] = ED->dword[0] & ~VD->dword[0];
+            CONDITIONAL_SET_FLAG(GD->q[0]==0, F_ZF);
+            CONDITIONAL_SET_FLAG(rex.w?(GD->q[0]>>63):(GD->dword[0]>>31), F_SF);
+            CLEAR_FLAG(F_CF);
+            CLEAR_FLAG(F_OF);
+            CLEAR_FLAG(F_AF);   // Undef
+            CLEAR_FLAG(F_PF);   // Undef
             break;
         case 0xF3:
             nextop = F8;
             switch((nextop>>3)&7) {
                 case 1:     /* BLSR Vd, Ed */
-                    if(vex.l) emit_signal(emu, SIGILL, (void*)R_RIP, 0);
+                    if(vex.l) EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
                     ResetFlags(emu);
                     GETVD;
                     GETED(0);
@@ -86,17 +89,19 @@ uintptr_t RunAVX_0F38(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
                     if(rex.w)
                         VD->q[0] = ED->q[0] & (ED->q[0]-1LL);
                     else
-                        VD->dword[0] = ED->dword[0] & (ED->dword[0]-1);
-                    if(MODREG && !rex.w)
-                        VD->dword[1] = 0;
-                    CONDITIONAL_SET_FLAG(rex.w?(VD->q[0]==0):(VD->dword[0]==0), F_ZF);
+                        VD->q[0] = ED->dword[0] & (ED->dword[0]-1);
+                    CONDITIONAL_SET_FLAG(VD->q[0]==0, F_ZF);
                     CONDITIONAL_SET_FLAG(rex.w?(VD->q[0]>>63):(VD->dword[0]>>31), F_SF);
                     CLEAR_FLAG(F_OF);
                     CLEAR_FLAG(F_AF);   // Undef
-                    CLEAR_FLAG(F_PF);   // Undef
+                    if(BOX64ENV(cputype)) {
+                        CLEAR_FLAG(F_PF);
+                    } else {
+                        CONDITIONAL_SET_FLAG(PARITY(VD->byte[0] & 0xff), F_PF);
+                    }
                     break;
                 case 2:     /* BLSMSK Vd, Ed */
-                    if(vex.l) emit_signal(emu, SIGILL, (void*)R_RIP, 0);
+                    if(vex.l) EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
                     ResetFlags(emu);
                     GETVD;
                     GETED(0);
@@ -104,32 +109,40 @@ uintptr_t RunAVX_0F38(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
                     if(rex.w)
                         VD->q[0] = ED->q[0] ^ (ED->q[0]-1LL);
                     else
-                        VD->dword[0] = ED->dword[0] ^ (ED->dword[0]-1);
-                    if(MODREG && !rex.w)
-                        VD->dword[1] = 0;
+                        VD->q[0] = ED->dword[0] ^ (ED->dword[0]-1);
                     CONDITIONAL_SET_FLAG(rex.w?(VD->q[0]>>63):(VD->dword[0]>>31), F_SF);
                     CLEAR_FLAG(F_ZF);
                     CLEAR_FLAG(F_OF);
-                    CLEAR_FLAG(F_AF);   // Undef
-                    CLEAR_FLAG(F_PF);   // Undef
+                    // Undef flags
+                    CLEAR_FLAG(F_AF);
+                    if(BOX64ENV(cputype)) {
+                        CLEAR_FLAG(F_PF);
+                    } else {
+                        CONDITIONAL_SET_FLAG(PARITY(VD->byte[0] & 0xff), F_PF);
+                    }
                     break;
                 case 3:     /* BLSI Vd, Ed */
-                    if(vex.l) emit_signal(emu, SIGILL, (void*)R_RIP, 0);
+                    if(vex.l) EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
                     ResetFlags(emu);
                     GETVD;
                     GETED(0);
-                    CONDITIONAL_SET_FLAG(rex.w?(ED->q[0]==0):(ED->dword[0]==0), F_CF);
+                    CONDITIONAL_SET_FLAG(rex.w?(ED->q[0]!=0):(ED->dword[0]!=0), F_CF);
                     if(rex.w)
                         VD->sq[0] = ED->sq[0] & (-ED->sq[0]);
                     else
                         VD->sdword[0] = ED->sdword[0] & (-ED->sdword[0]);
-                    if(MODREG && !rex.w)
+                    if(!rex.w)
                         VD->dword[1] = 0;
                     CONDITIONAL_SET_FLAG(rex.w?(VD->q[0]==0):(VD->dword[0]==0), F_ZF);
                     CONDITIONAL_SET_FLAG(rex.w?(VD->q[0]>>63):(VD->dword[0]>>31), F_SF);
                     CLEAR_FLAG(F_OF);
                     CLEAR_FLAG(F_AF);   // Undef
-                    CLEAR_FLAG(F_PF);   // Undef
+                    if(BOX64ENV(cputype)) {
+                        CLEAR_FLAG(F_PF);
+                    } else {
+                        CONDITIONAL_SET_FLAG(PARITY(VD->byte[0] & 0xff), F_PF);
+                    }
+
                     break;
                 default:
                     return 0;
@@ -138,7 +151,7 @@ uintptr_t RunAVX_0F38(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
 
         case 0xF5:  /* BZHI Gd, Ed, Vd */
             nextop = F8;
-            if(vex.l) emit_signal(emu, SIGILL, (void*)R_RIP, 0);
+            if(vex.l) EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
             GETGD;
             GETED(0);
             GETVD;
@@ -153,15 +166,20 @@ uintptr_t RunAVX_0F38(x64emu_t *emu, vex_t vex, uintptr_t addr, int *step)
                 CONDITIONAL_SET_FLAG((tmp32u>31), F_CF);
             }
             CONDITIONAL_SET_FLAG(rex.w?(GD->q[0]==0):(GD->dword[0]==0), F_ZF);
-            CONDITIONAL_SET_FLAG(rex.w?(VD->q[0]>>63):(VD->dword[0]>>31), F_SF);
+            CONDITIONAL_SET_FLAG(rex.w?(GD->q[0]>>63):(GD->dword[0]>>31), F_SF);
             CLEAR_FLAG(F_OF);
-            CLEAR_FLAG(F_AF);   // Undef
-            CLEAR_FLAG(F_PF);   // Undef
+            // UD flags
+            CLEAR_FLAG(F_AF);
+            if(BOX64ENV(cputype)) {
+                CLEAR_FLAG(F_PF);
+            } else {
+                CONDITIONAL_SET_FLAG(PARITY(VD->byte[0] & 0xff), F_PF);
+            }
             break;
 
         case 0xF7:  /* BEXTR Gd, Ed, Vd */
             nextop = F8;
-            if(vex.l) emit_signal(emu, SIGILL, (void*)R_RIP, 0);
+            if(vex.l) EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
             ResetFlags(emu);
             GETGD;
             GETED(0);

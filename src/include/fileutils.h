@@ -3,13 +3,6 @@
 
 #include "pathcoll.h"
 
-#define IS_EXECUTABLE   (1<<0)
-#define IS_FILE         (1<<1)
-       
-
-// 0 : doesn't exist, 1: Does exist
-int FileExist(const char* filename, int flags);
-
 // find a file, using Path if needed, resolving symlinks
 char* ResolveFile(const char* filename, path_collection_t* paths);
 // find a file, using Path if needed, NOT resolving symlinks
@@ -19,12 +12,10 @@ char* ResolveFileSoft(const char* filename, path_collection_t* paths);
 int FileIsX86ELF(const char* filename);
 int FileIsX64ELF(const char* filename);
 int FileIsShell(const char* filename);
+size_t FileSize(const char* filename);
 
 // return temp folder (will return /tmp if nothing is correct)
 const char* GetTmpDir(void);
-
-// will lower case the string and return a copy. Nothing fancy here, just A..Z transformed to a..z, rest is untouched
-char* LowerCase(const char* s);
 
 #if defined(RPI) || defined(RK3399) || defined(RK3326)
 void sanitize_mojosetup_gtk_background(void);

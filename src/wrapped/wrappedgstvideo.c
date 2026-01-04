@@ -20,11 +20,8 @@
 #include "gtkclass.h"
 #include "fileutils.h"
 
-#ifdef ANDROID
-    const char* gstvideoName = "libgstvideo-1.0.so";
-#else
-    const char* gstvideoName = "libgstvideo-1.0.so.0";
-#endif
+const char* gstvideoName = "libgstvideo-1.0.so.0";
+#define ALTNAME "libgstvideo-1.0.so"
 
 #define LIBNAME gstvideo
 
@@ -37,13 +34,14 @@ typedef size_t  (*LFv_t)();
     GO(gst_video_aggregator_get_type, LFv_t)        \
     GO(gst_video_aggregator_pad_get_type, LFv_t)    \
     GO(gst_video_filter_get_type, LFv_t)            \
+    GO(gst_video_buffer_pool_get_type, LFv_t)       \
 
 #include "generated/wrappedgstbasetypes.h"
 
 #include "wrappercallback.h"
 
 #define PRE_INIT    \
-    if(box64_nogtk) \
+    if(BOX64ENV(nogtk)) \
         return -1;
 
 #define CUSTOM_INIT \
@@ -52,12 +50,9 @@ typedef size_t  (*LFv_t)();
     SetGstVideoSinkID(my->gst_video_sink_get_type());\
     SetGstVideoAggregatorID(my->gst_video_aggregator_get_type());\
     SetGstVideoAggregatorPadID(my->gst_video_aggregator_pad_get_type());\
-    SetGstVideoFilterID(my->gst_video_filter_get_type());
+    SetGstVideoFilterID(my->gst_video_filter_get_type());\
+    SetGstVideoBufferPoolID(my->gst_video_buffer_pool_get_type());\
 
-#ifdef ANDROID
-#define NEEDED_LIBS "libgstreamer-1.0.so"
-#else
 #define NEEDED_LIBS "libgstreamer-1.0.so.0"
-#endif
 
 #include "wrappedlib_init.h"

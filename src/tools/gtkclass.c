@@ -6,18 +6,100 @@
 
 #include "wrappedlibs.h"
 
-#include "debug.h"
-#include "wrapper.h"
 #include "bridge.h"
+#include "alternate.h"
+#include "debug.h"
 #include "callback.h"
-#include "box64context.h"
 #include "librarian.h"
 #include "gtkclass.h"
 #include "library.h"
-#include "custommem.h"
-#include "khash.h"
 
-int is_gtk3 = 0;
+// This file takes ages to compile, and yet wrapper.h changed pretty often, remove
+// the dependency and declare the functions and macros here to prevent the recompilation as much as possible.
+// #include "wrapper.h"
+/*
+To generate this content again, you can use the following Python code:
+
+import re
+file_path = 'path/to/box64/src/tools/gtkclass.c'
+with open(file_path, 'r') as file:
+    content = file.read()
+pattern = r' ([a-zA-Z]F[a-zA-Z]+)'
+matches = re.findall(pattern, content)
+unique_sorted_matches = sorted(set(matches))
+for match in unique_sorted_matches:
+    print(f'void {match}(x64emu_t *emu, uintptr_t fnc);')
+*/
+
+void UFp(x64emu_t* emu, uintptr_t fnc);
+void iFL(x64emu_t* emu, uintptr_t fnc);
+void iFp(x64emu_t* emu, uintptr_t fnc);
+void iFpUU(x64emu_t* emu, uintptr_t fnc);
+void iFpUup(x64emu_t* emu, uintptr_t fnc);
+void iFpi(x64emu_t* emu, uintptr_t fnc);
+void iFpii(x64emu_t* emu, uintptr_t fnc);
+void iFpiii(x64emu_t* emu, uintptr_t fnc);
+void iFpiiip(x64emu_t* emu, uintptr_t fnc);
+void iFpip(x64emu_t* emu, uintptr_t fnc);
+void iFpipLpp(x64emu_t* emu, uintptr_t fnc);
+void iFpippp(x64emu_t* emu, uintptr_t fnc);
+void iFpp(x64emu_t* emu, uintptr_t fnc);
+void iFppLp(x64emu_t* emu, uintptr_t fnc);
+void iFppU(x64emu_t* emu, uintptr_t fnc);
+void iFppUup(x64emu_t* emu, uintptr_t fnc);
+void iFppdd(x64emu_t* emu, uintptr_t fnc);
+void iFppi(x64emu_t* emu, uintptr_t fnc);
+void iFppii(x64emu_t* emu, uintptr_t fnc);
+void iFppiiu(x64emu_t* emu, uintptr_t fnc);
+void iFppp(x64emu_t* emu, uintptr_t fnc);
+void iFpppi(x64emu_t* emu, uintptr_t fnc);
+void iFpppp(x64emu_t* emu, uintptr_t fnc);
+void iFppppp(x64emu_t* emu, uintptr_t fnc);
+void iFpu(x64emu_t* emu, uintptr_t fnc);
+void iFpupp(x64emu_t* emu, uintptr_t fnc);
+void pFL(x64emu_t* emu, uintptr_t fnc);
+void pFLup(x64emu_t* emu, uintptr_t fnc);
+void pFp(x64emu_t* emu, uintptr_t fnc);
+void pFpLi(x64emu_t* emu, uintptr_t fnc);
+void pFpLp(x64emu_t* emu, uintptr_t fnc);
+void pFpi(x64emu_t* emu, uintptr_t fnc);
+void pFpipp(x64emu_t* emu, uintptr_t fnc);
+void pFpll(x64emu_t* emu, uintptr_t fnc);
+void pFpp(x64emu_t* emu, uintptr_t fnc);
+void pFppL(x64emu_t* emu, uintptr_t fnc);
+void pFppp(x64emu_t* emu, uintptr_t fnc);
+void pFpppp(x64emu_t* emu, uintptr_t fnc);
+void pFppppp(x64emu_t* emu, uintptr_t fnc);
+void pFpppppp(x64emu_t* emu, uintptr_t fnc);
+void pFv(x64emu_t* emu, uintptr_t fnc);
+void uFpp(x64emu_t* emu, uintptr_t fnc);
+void vFLp(x64emu_t* emu, uintptr_t fnc);
+void vFLup(x64emu_t* emu, uintptr_t fnc);
+void vFp(x64emu_t* emu, uintptr_t fnc);
+void vFpdd(x64emu_t* emu, uintptr_t fnc);
+void vFpi(x64emu_t* emu, uintptr_t fnc);
+void vFpii(x64emu_t* emu, uintptr_t fnc);
+void vFpiii(x64emu_t* emu, uintptr_t fnc);
+void vFpip(x64emu_t* emu, uintptr_t fnc);
+void vFpipp(x64emu_t* emu, uintptr_t fnc);
+void vFpipppp(x64emu_t* emu, uintptr_t fnc);
+void vFpp(x64emu_t* emu, uintptr_t fnc);
+void vFppdd(x64emu_t* emu, uintptr_t fnc);
+void vFppi(x64emu_t* emu, uintptr_t fnc);
+void vFppiipuu(x64emu_t* emu, uintptr_t fnc);
+void vFppip(x64emu_t* emu, uintptr_t fnc);
+void vFppp(x64emu_t* emu, uintptr_t fnc);
+void vFpppp(x64emu_t* emu, uintptr_t fnc);
+void vFppppp(x64emu_t* emu, uintptr_t fnc);
+void vFpppppp(x64emu_t* emu, uintptr_t fnc);
+void vFpppuu(x64emu_t* emu, uintptr_t fnc);
+void vFppu(x64emu_t* emu, uintptr_t fnc);
+void vFppupp(x64emu_t* emu, uintptr_t fnc);
+void vFppuu(x64emu_t* emu, uintptr_t fnc);
+void vFpu(x64emu_t* emu, uintptr_t fnc);
+void vFpup(x64emu_t* emu, uintptr_t fnc);
+void vFpupp(x64emu_t* emu, uintptr_t fnc);
+void vFu(x64emu_t* emu, uintptr_t fnc);
 
 static bridge_t*        my_bridge           = NULL;
 static const char* (*g_type_name)(size_t)   = NULL;
@@ -60,21 +142,21 @@ static RET my_##NAME##_##A DEF              \
 }
 
 #define FIND(A, NAME) \
-static void* find_##NAME##_##A(void* fct)                           \
-{                                                                   \
-    if(!fct) return fct;                                            \
-    void* tmp = GetNativeFnc((uintptr_t)fct);                       \
-    if(tmp) return tmp;                                             \
-    if(my_##NAME##_##A##_fct_0 == (uintptr_t)fct) return my_##NAME##_##A##_0;   \
-    if(my_##NAME##_##A##_fct_1 == (uintptr_t)fct) return my_##NAME##_##A##_1;   \
-    if(my_##NAME##_##A##_fct_2 == (uintptr_t)fct) return my_##NAME##_##A##_2;   \
-    if(my_##NAME##_##A##_fct_3 == (uintptr_t)fct) return my_##NAME##_##A##_3;   \
-    if(my_##NAME##_##A##_fct_4 == (uintptr_t)fct) return my_##NAME##_##A##_4;   \
-    if(my_##NAME##_##A##_fct_5 == (uintptr_t)fct) return my_##NAME##_##A##_5;   \
-    if(my_##NAME##_##A##_fct_6 == (uintptr_t)fct) return my_##NAME##_##A##_6;   \
-    if(my_##NAME##_##A##_fct_7 == (uintptr_t)fct) return my_##NAME##_##A##_7;   \
-    if(my_##NAME##_##A##_fct_8 == (uintptr_t)fct) return my_##NAME##_##A##_8;   \
-    if(my_##NAME##_##A##_fct_9 == (uintptr_t)fct) return my_##NAME##_##A##_9;   \
+static void* find_##NAME##_##A(wrapper_t W, void* fct)                            \
+{                                                                                 \
+    if(!fct) return fct;                                                          \
+    void* tmp = GetNativeFnc((uintptr_t)fct);                                     \
+    if(tmp) {AddAutomaticBridge(my_bridge, W, fct, 0, #NAME "_" #A); return tmp;} \
+    if(my_##NAME##_##A##_fct_0 == (uintptr_t)fct) return my_##NAME##_##A##_0;     \
+    if(my_##NAME##_##A##_fct_1 == (uintptr_t)fct) return my_##NAME##_##A##_1;     \
+    if(my_##NAME##_##A##_fct_2 == (uintptr_t)fct) return my_##NAME##_##A##_2;     \
+    if(my_##NAME##_##A##_fct_3 == (uintptr_t)fct) return my_##NAME##_##A##_3;     \
+    if(my_##NAME##_##A##_fct_4 == (uintptr_t)fct) return my_##NAME##_##A##_4;     \
+    if(my_##NAME##_##A##_fct_5 == (uintptr_t)fct) return my_##NAME##_##A##_5;     \
+    if(my_##NAME##_##A##_fct_6 == (uintptr_t)fct) return my_##NAME##_##A##_6;     \
+    if(my_##NAME##_##A##_fct_7 == (uintptr_t)fct) return my_##NAME##_##A##_7;     \
+    if(my_##NAME##_##A##_fct_8 == (uintptr_t)fct) return my_##NAME##_##A##_8;     \
+    if(my_##NAME##_##A##_fct_9 == (uintptr_t)fct) return my_##NAME##_##A##_9;     \
     if(my_##NAME##_##A##_fct_10 == (uintptr_t)fct) return my_##NAME##_##A##_10;   \
     if(my_##NAME##_##A##_fct_11 == (uintptr_t)fct) return my_##NAME##_##A##_11;   \
     if(my_##NAME##_##A##_fct_12 == (uintptr_t)fct) return my_##NAME##_##A##_12;   \
@@ -105,46 +187,46 @@ static void* find_##NAME##_##A(void* fct)                           \
     if(my_##NAME##_##A##_fct_37 == (uintptr_t)fct) return my_##NAME##_##A##_37;   \
     if(my_##NAME##_##A##_fct_38 == (uintptr_t)fct) return my_##NAME##_##A##_38;   \
     if(my_##NAME##_##A##_fct_39 == (uintptr_t)fct) return my_##NAME##_##A##_39;   \
-    if(my_##NAME##_##A##_fct_0 == 0) {my_##NAME##_##A##_fct_0 = (uintptr_t)fct; return my_##NAME##_##A##_0; } \
-    if(my_##NAME##_##A##_fct_1 == 0) {my_##NAME##_##A##_fct_1 = (uintptr_t)fct; return my_##NAME##_##A##_1; } \
-    if(my_##NAME##_##A##_fct_2 == 0) {my_##NAME##_##A##_fct_2 = (uintptr_t)fct; return my_##NAME##_##A##_2; } \
-    if(my_##NAME##_##A##_fct_3 == 0) {my_##NAME##_##A##_fct_3 = (uintptr_t)fct; return my_##NAME##_##A##_3; } \
-    if(my_##NAME##_##A##_fct_4 == 0) {my_##NAME##_##A##_fct_4 = (uintptr_t)fct; return my_##NAME##_##A##_4; } \
-    if(my_##NAME##_##A##_fct_5 == 0) {my_##NAME##_##A##_fct_5 = (uintptr_t)fct; return my_##NAME##_##A##_5; } \
-    if(my_##NAME##_##A##_fct_6 == 0) {my_##NAME##_##A##_fct_6 = (uintptr_t)fct; return my_##NAME##_##A##_6; } \
-    if(my_##NAME##_##A##_fct_7 == 0) {my_##NAME##_##A##_fct_7 = (uintptr_t)fct; return my_##NAME##_##A##_7; } \
-    if(my_##NAME##_##A##_fct_8 == 0) {my_##NAME##_##A##_fct_8 = (uintptr_t)fct; return my_##NAME##_##A##_8; } \
-    if(my_##NAME##_##A##_fct_9 == 0) {my_##NAME##_##A##_fct_9 = (uintptr_t)fct; return my_##NAME##_##A##_9; } \
-    if(my_##NAME##_##A##_fct_10 == 0) {my_##NAME##_##A##_fct_10 = (uintptr_t)fct; return my_##NAME##_##A##_10; } \
-    if(my_##NAME##_##A##_fct_11 == 0) {my_##NAME##_##A##_fct_11 = (uintptr_t)fct; return my_##NAME##_##A##_11; } \
-    if(my_##NAME##_##A##_fct_12 == 0) {my_##NAME##_##A##_fct_12 = (uintptr_t)fct; return my_##NAME##_##A##_12; } \
-    if(my_##NAME##_##A##_fct_13 == 0) {my_##NAME##_##A##_fct_13 = (uintptr_t)fct; return my_##NAME##_##A##_13; } \
-    if(my_##NAME##_##A##_fct_14 == 0) {my_##NAME##_##A##_fct_14 = (uintptr_t)fct; return my_##NAME##_##A##_14; } \
-    if(my_##NAME##_##A##_fct_15 == 0) {my_##NAME##_##A##_fct_15 = (uintptr_t)fct; return my_##NAME##_##A##_15; } \
-    if(my_##NAME##_##A##_fct_16 == 0) {my_##NAME##_##A##_fct_16 = (uintptr_t)fct; return my_##NAME##_##A##_16; } \
-    if(my_##NAME##_##A##_fct_17 == 0) {my_##NAME##_##A##_fct_17 = (uintptr_t)fct; return my_##NAME##_##A##_17; } \
-    if(my_##NAME##_##A##_fct_18 == 0) {my_##NAME##_##A##_fct_18 = (uintptr_t)fct; return my_##NAME##_##A##_18; } \
-    if(my_##NAME##_##A##_fct_19 == 0) {my_##NAME##_##A##_fct_19 = (uintptr_t)fct; return my_##NAME##_##A##_19; } \
-    if(my_##NAME##_##A##_fct_20 == 0) {my_##NAME##_##A##_fct_20 = (uintptr_t)fct; return my_##NAME##_##A##_20; } \
-    if(my_##NAME##_##A##_fct_21 == 0) {my_##NAME##_##A##_fct_21 = (uintptr_t)fct; return my_##NAME##_##A##_21; } \
-    if(my_##NAME##_##A##_fct_22 == 0) {my_##NAME##_##A##_fct_22 = (uintptr_t)fct; return my_##NAME##_##A##_22; } \
-    if(my_##NAME##_##A##_fct_23 == 0) {my_##NAME##_##A##_fct_23 = (uintptr_t)fct; return my_##NAME##_##A##_23; } \
-    if(my_##NAME##_##A##_fct_24 == 0) {my_##NAME##_##A##_fct_24 = (uintptr_t)fct; return my_##NAME##_##A##_24; } \
-    if(my_##NAME##_##A##_fct_25 == 0) {my_##NAME##_##A##_fct_25 = (uintptr_t)fct; return my_##NAME##_##A##_25; } \
-    if(my_##NAME##_##A##_fct_26 == 0) {my_##NAME##_##A##_fct_26 = (uintptr_t)fct; return my_##NAME##_##A##_26; } \
-    if(my_##NAME##_##A##_fct_27 == 0) {my_##NAME##_##A##_fct_27 = (uintptr_t)fct; return my_##NAME##_##A##_27; } \
-    if(my_##NAME##_##A##_fct_28 == 0) {my_##NAME##_##A##_fct_28 = (uintptr_t)fct; return my_##NAME##_##A##_28; } \
-    if(my_##NAME##_##A##_fct_29 == 0) {my_##NAME##_##A##_fct_29 = (uintptr_t)fct; return my_##NAME##_##A##_29; } \
-    if(my_##NAME##_##A##_fct_30 == 0) {my_##NAME##_##A##_fct_30 = (uintptr_t)fct; return my_##NAME##_##A##_30; } \
-    if(my_##NAME##_##A##_fct_31 == 0) {my_##NAME##_##A##_fct_31 = (uintptr_t)fct; return my_##NAME##_##A##_31; } \
-    if(my_##NAME##_##A##_fct_32 == 0) {my_##NAME##_##A##_fct_32 = (uintptr_t)fct; return my_##NAME##_##A##_32; } \
-    if(my_##NAME##_##A##_fct_33 == 0) {my_##NAME##_##A##_fct_33 = (uintptr_t)fct; return my_##NAME##_##A##_33; } \
-    if(my_##NAME##_##A##_fct_34 == 0) {my_##NAME##_##A##_fct_34 = (uintptr_t)fct; return my_##NAME##_##A##_34; } \
-    if(my_##NAME##_##A##_fct_35 == 0) {my_##NAME##_##A##_fct_35 = (uintptr_t)fct; return my_##NAME##_##A##_35; } \
-    if(my_##NAME##_##A##_fct_36 == 0) {my_##NAME##_##A##_fct_36 = (uintptr_t)fct; return my_##NAME##_##A##_36; } \
-    if(my_##NAME##_##A##_fct_37 == 0) {my_##NAME##_##A##_fct_37 = (uintptr_t)fct; return my_##NAME##_##A##_37; } \
-    if(my_##NAME##_##A##_fct_38 == 0) {my_##NAME##_##A##_fct_38 = (uintptr_t)fct; return my_##NAME##_##A##_38; } \
-    if(my_##NAME##_##A##_fct_39 == 0) {my_##NAME##_##A##_fct_39 = (uintptr_t)fct; return my_##NAME##_##A##_39; } \
+    if(my_##NAME##_##A##_fct_0 == 0) {my_##NAME##_##A##_fct_0 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_0, fct); return my_##NAME##_##A##_0; } \
+    if(my_##NAME##_##A##_fct_1 == 0) {my_##NAME##_##A##_fct_1 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_1, fct); return my_##NAME##_##A##_1; } \
+    if(my_##NAME##_##A##_fct_2 == 0) {my_##NAME##_##A##_fct_2 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_2, fct); return my_##NAME##_##A##_2; } \
+    if(my_##NAME##_##A##_fct_3 == 0) {my_##NAME##_##A##_fct_3 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_3, fct); return my_##NAME##_##A##_3; } \
+    if(my_##NAME##_##A##_fct_4 == 0) {my_##NAME##_##A##_fct_4 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_4, fct); return my_##NAME##_##A##_4; } \
+    if(my_##NAME##_##A##_fct_5 == 0) {my_##NAME##_##A##_fct_5 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_5, fct); return my_##NAME##_##A##_5; } \
+    if(my_##NAME##_##A##_fct_6 == 0) {my_##NAME##_##A##_fct_6 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_6, fct); return my_##NAME##_##A##_6; } \
+    if(my_##NAME##_##A##_fct_7 == 0) {my_##NAME##_##A##_fct_7 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_7, fct); return my_##NAME##_##A##_7; } \
+    if(my_##NAME##_##A##_fct_8 == 0) {my_##NAME##_##A##_fct_8 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_8, fct); return my_##NAME##_##A##_8; } \
+    if(my_##NAME##_##A##_fct_9 == 0) {my_##NAME##_##A##_fct_9 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_9, fct); return my_##NAME##_##A##_9; } \
+    if(my_##NAME##_##A##_fct_10 == 0) {my_##NAME##_##A##_fct_10 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_10, fct); return my_##NAME##_##A##_10; } \
+    if(my_##NAME##_##A##_fct_11 == 0) {my_##NAME##_##A##_fct_11 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_11, fct); return my_##NAME##_##A##_11; } \
+    if(my_##NAME##_##A##_fct_12 == 0) {my_##NAME##_##A##_fct_12 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_12, fct); return my_##NAME##_##A##_12; } \
+    if(my_##NAME##_##A##_fct_13 == 0) {my_##NAME##_##A##_fct_13 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_13, fct); return my_##NAME##_##A##_13; } \
+    if(my_##NAME##_##A##_fct_14 == 0) {my_##NAME##_##A##_fct_14 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_14, fct); return my_##NAME##_##A##_14; } \
+    if(my_##NAME##_##A##_fct_15 == 0) {my_##NAME##_##A##_fct_15 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_15, fct); return my_##NAME##_##A##_15; } \
+    if(my_##NAME##_##A##_fct_16 == 0) {my_##NAME##_##A##_fct_16 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_16, fct); return my_##NAME##_##A##_16; } \
+    if(my_##NAME##_##A##_fct_17 == 0) {my_##NAME##_##A##_fct_17 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_17, fct); return my_##NAME##_##A##_17; } \
+    if(my_##NAME##_##A##_fct_18 == 0) {my_##NAME##_##A##_fct_18 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_18, fct); return my_##NAME##_##A##_18; } \
+    if(my_##NAME##_##A##_fct_19 == 0) {my_##NAME##_##A##_fct_19 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_19, fct); return my_##NAME##_##A##_19; } \
+    if(my_##NAME##_##A##_fct_20 == 0) {my_##NAME##_##A##_fct_20 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_20, fct); return my_##NAME##_##A##_20; } \
+    if(my_##NAME##_##A##_fct_21 == 0) {my_##NAME##_##A##_fct_21 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_21, fct); return my_##NAME##_##A##_21; } \
+    if(my_##NAME##_##A##_fct_22 == 0) {my_##NAME##_##A##_fct_22 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_22, fct); return my_##NAME##_##A##_22; } \
+    if(my_##NAME##_##A##_fct_23 == 0) {my_##NAME##_##A##_fct_23 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_23, fct); return my_##NAME##_##A##_23; } \
+    if(my_##NAME##_##A##_fct_24 == 0) {my_##NAME##_##A##_fct_24 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_24, fct); return my_##NAME##_##A##_24; } \
+    if(my_##NAME##_##A##_fct_25 == 0) {my_##NAME##_##A##_fct_25 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_25, fct); return my_##NAME##_##A##_25; } \
+    if(my_##NAME##_##A##_fct_26 == 0) {my_##NAME##_##A##_fct_26 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_26, fct); return my_##NAME##_##A##_26; } \
+    if(my_##NAME##_##A##_fct_27 == 0) {my_##NAME##_##A##_fct_27 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_27, fct); return my_##NAME##_##A##_27; } \
+    if(my_##NAME##_##A##_fct_28 == 0) {my_##NAME##_##A##_fct_28 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_28, fct); return my_##NAME##_##A##_28; } \
+    if(my_##NAME##_##A##_fct_29 == 0) {my_##NAME##_##A##_fct_29 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_29, fct); return my_##NAME##_##A##_29; } \
+    if(my_##NAME##_##A##_fct_30 == 0) {my_##NAME##_##A##_fct_30 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_30, fct); return my_##NAME##_##A##_30; } \
+    if(my_##NAME##_##A##_fct_31 == 0) {my_##NAME##_##A##_fct_31 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_31, fct); return my_##NAME##_##A##_31; } \
+    if(my_##NAME##_##A##_fct_32 == 0) {my_##NAME##_##A##_fct_32 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_32, fct); return my_##NAME##_##A##_32; } \
+    if(my_##NAME##_##A##_fct_33 == 0) {my_##NAME##_##A##_fct_33 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_33, fct); return my_##NAME##_##A##_33; } \
+    if(my_##NAME##_##A##_fct_34 == 0) {my_##NAME##_##A##_fct_34 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_34, fct); return my_##NAME##_##A##_34; } \
+    if(my_##NAME##_##A##_fct_35 == 0) {my_##NAME##_##A##_fct_35 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_35, fct); return my_##NAME##_##A##_35; } \
+    if(my_##NAME##_##A##_fct_36 == 0) {my_##NAME##_##A##_fct_36 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_36, fct); return my_##NAME##_##A##_36; } \
+    if(my_##NAME##_##A##_fct_37 == 0) {my_##NAME##_##A##_fct_37 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_37, fct); return my_##NAME##_##A##_37; } \
+    if(my_##NAME##_##A##_fct_38 == 0) {my_##NAME##_##A##_fct_38 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_38, fct); return my_##NAME##_##A##_38; } \
+    if(my_##NAME##_##A##_fct_39 == 0) {my_##NAME##_##A##_fct_39 = (uintptr_t)fct; addCheckAlternate((void*)my_##NAME##_##A##_fct_39, fct); return my_##NAME##_##A##_39; } \
     printf_log(LOG_NONE, "Warning, no more slot for " #A " " #NAME " gtkclass callback\n");    \
     return NULL;    \
 }
@@ -285,7 +367,7 @@ static void wrapGObjectClass(my_GObjectClass_t* class)
 // unwrap (and use callback if not a native call anymore)
 static void unwrapGObjectClass(my_GObjectClass_t* class)
 {
-    #define GO(A, W)   class->A = find_##A##_GObject (class->A)
+    #define GO(A, W)   class->A = find_##A##_GObject (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -338,7 +420,7 @@ static void wrapGInitiallyUnownedClass(my_GInitiallyUnownedClass_t* class)
 // unwrap (and use callback if not a native call anymore)
 static void unwrapGInitiallyUnownedClass(my_GInitiallyUnownedClass_t* class)
 {
-    #define GO(A, W)   class->A = find_##A##_GInitiallyUnowned (class->A)
+    #define GO(A, W)   class->A = find_##A##_GInitiallyUnowned (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -406,7 +488,7 @@ static void wrapGApplicationClass(my_GApplicationClass_t* class)
 static void unwrapGApplicationClass(my_GApplicationClass_t* class)
 {
     unwrapGObjectClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GApplication (class->A)   //SUPERGO() defined but not used
+    #define GO(A, W)   class->A = find_##A##_GApplication (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -452,7 +534,7 @@ static void wrapGtkApplicationClass(my_GtkApplicationClass_t* class)
 static void unwrapGtkApplicationClass(my_GtkApplicationClass_t* class)
 {
     unwrapGApplicationClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkApplication (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkApplication (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -499,7 +581,7 @@ static void wrapGtkObjectClass(my_GtkObjectClass_t* class)
 static void unwrapGtkObjectClass(my_GtkObjectClass_t* class)
 {
     unwrapGInitiallyUnownedClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkObject (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkObject (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -673,7 +755,7 @@ static void wrapGtkWidget2Class(my_GtkWidget2Class_t* class)
 static void unwrapGtkWidget2Class(my_GtkWidget2Class_t* class)
 {
     unwrapGtkObjectClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkWidget2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkWidget2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -880,7 +962,7 @@ static void wrapGtkWidget3Class(my_GtkWidget3Class_t* class)
 static void unwrapGtkWidget3Class(my_GtkWidget3Class_t* class)
 {
     unwrapGInitiallyUnownedClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkWidget3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkWidget3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -940,7 +1022,7 @@ static void wrapGtkContainer2Class(my_GtkContainer2Class_t* class)
 static void unwrapGtkContainer2Class(my_GtkContainer2Class_t* class)
 {
     unwrapGtkWidget2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkContainer2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkContainer2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1002,7 +1084,7 @@ static void wrapGtkContainer3Class(my_GtkContainer3Class_t* class)
 static void unwrapGtkContainer3Class(my_GtkContainer3Class_t* class)
 {
     unwrapGtkWidget3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkContainer3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkContainer3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1056,7 +1138,7 @@ static void wrapGtkActionClass(my_GtkActionClass_t* class)
 static void unwrapGtkActionClass(my_GtkActionClass_t* class)
 {
     unwrapGObjectClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkAction (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkAction (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1124,7 +1206,7 @@ static void wrapGtkMisc3Class(my_GtkMisc3Class_t* class)
 static void unwrapGtkMisc3Class(my_GtkMisc3Class_t* class)
 {
     unwrapGtkWidget3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkMisc3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkMisc3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1203,7 +1285,7 @@ static void wrapGtkLabel2Class(my_GtkLabel2Class_t* class)
 static void unwrapGtkLabel2Class(my_GtkLabel2Class_t* class)
 {
     unwrapGtkMisc2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkLabel2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkLabel2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1252,7 +1334,7 @@ static void wrapGtkLabel3Class(my_GtkLabel3Class_t* class)
 static void unwrapGtkLabel3Class(my_GtkLabel3Class_t* class)
 {
     unwrapGtkMisc3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkLabel3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkLabel3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1326,7 +1408,7 @@ static void wrapGtkTreeView2Class(my_GtkTreeView2Class_t* class)
 static void unwrapGtkTreeView2Class(my_GtkTreeView2Class_t* class)
 {
     unwrapGtkContainer2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkTreeView2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkTreeView2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1434,7 +1516,7 @@ static void wrapGtkWindow2Class(my_GtkWindow2Class_t* class)
 static void unwrapGtkWindow2Class(my_GtkWindow2Class_t* class)
 {
     unwrapGtkBin2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkWindow2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkWindow2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1487,7 +1569,7 @@ static void wrapGtkWindow3Class(my_GtkWindow3Class_t* class)
 static void unwrapGtkWindow3Class(my_GtkWindow3Class_t* class)
 {
     unwrapGtkBin3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkWindow3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkWindow3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1571,7 +1653,7 @@ static void wrapGtkListBoxClass(my_GtkListBoxClass_t* class)
 static void unwrapGtkListBoxClass(my_GtkListBoxClass_t* class)
 {
     unwrapGtkContainer3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkListBoxClass (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkListBoxClass (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1615,7 +1697,7 @@ static void wrapGtkListBoxRowClass(my_GtkListBoxRowClass_t* class)
 static void unwrapGtkListBoxRowClass(my_GtkListBoxRowClass_t* class)
 {
     unwrapGtkBin3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkListBoxRowClass (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkListBoxRowClass (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1771,7 +1853,7 @@ static void wrapGDBusObjectManagerClientClass(my_GDBusObjectManagerClientClass_t
 static void unwrapGDBusObjectManagerClientClass(my_GDBusObjectManagerClientClass_t* class)
 {
     unwrapGObjectClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GDBusObjectManagerClient (class->A)
+    #define GO(A, W)   class->A = find_##A##_GDBusObjectManagerClient (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1826,7 +1908,7 @@ static void wrapGtkButton2Class(my_GtkButton2Class_t* class)
 static void unwrapGtkButton2Class(my_GtkButton2Class_t* class)
 {
     unwrapGtkBin2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkButton2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkButton2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1881,7 +1963,7 @@ static void wrapGtkButton3Class(my_GtkButton3Class_t* class)
 static void unwrapGtkButton3Class(my_GtkButton3Class_t* class)
 {
     unwrapGtkBin3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkButton3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkButton3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1928,7 +2010,7 @@ static void wrapGtkComboBox2Class(my_GtkComboBox2Class_t* class)
 static void unwrapGtkComboBox2Class(my_GtkComboBox2Class_t* class)
 {
     unwrapGtkBin2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkComboBox2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkComboBox2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -1973,7 +2055,7 @@ static void wrapGtkToggleButton2Class(my_GtkToggleButton2Class_t* class)
 static void unwrapGtkToggleButton2Class(my_GtkToggleButton2Class_t* class)
 {
     unwrapGtkButton2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkToggleButton2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkToggleButton2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2018,7 +2100,7 @@ static void wrapGtkToggleButton3Class(my_GtkToggleButton3Class_t* class)
 static void unwrapGtkToggleButton3Class(my_GtkToggleButton3Class_t* class)
 {
     unwrapGtkButton3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkToggleButton3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkToggleButton3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2063,7 +2145,7 @@ static void wrapGtkCheckButton2Class(my_GtkCheckButton2Class_t* class)
 static void unwrapGtkCheckButton2Class(my_GtkCheckButton2Class_t* class)
 {
     unwrapGtkToggleButton2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkCheckButton2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkCheckButton2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2108,7 +2190,7 @@ static void wrapGtkCheckButton3Class(my_GtkCheckButton3Class_t* class)
 static void unwrapGtkCheckButton3Class(my_GtkCheckButton3Class_t* class)
 {
     unwrapGtkToggleButton3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkCheckButton3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkCheckButton3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2149,7 +2231,7 @@ static void wrapGtkMenuButton3Class(my_GtkMenuButton3Class_t* class)
 static void unwrapGtkMenuButton3Class(my_GtkMenuButton3Class_t* class)
 {
     unwrapGtkToggleButton3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkMenuButton3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkMenuButton3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2211,7 +2293,7 @@ static void wrapGtkEntry2Class(my_GtkEntry2Class_t* class)
 static void unwrapGtkEntry2Class(my_GtkEntry2Class_t* class)
 {
     unwrapGtkWidget2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkEntry2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkEntry2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2263,7 +2345,7 @@ static void wrapGtkSpinButton2Class(my_GtkSpinButton2Class_t* class)
 static void unwrapGtkSpinButton2Class(my_GtkSpinButton2Class_t* class)
 {
     unwrapGtkEntry2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkSpinButton2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkSpinButton2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2311,7 +2393,7 @@ static void wrapGtkProgress2Class(my_GtkProgress2Class_t* class)
 static void unwrapGtkProgress2Class(my_GtkProgress2Class_t* class)
 {
     unwrapGtkWidget2Class(&class->parent);
-    #define GO(A, W)   class->A = find_##A##_GtkProgress2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkProgress2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2353,7 +2435,7 @@ static void wrapGtkProgressBar2Class(my_GtkProgressBar2Class_t* class)
 static void unwrapGtkProgressBar2Class(my_GtkProgressBar2Class_t* class)
 {
     unwrapGtkProgress2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkProgressBar2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkProgressBar2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2397,7 +2479,7 @@ static void wrapGtkFrame2Class(my_GtkFrame2Class_t* class)
 static void unwrapGtkFrame2Class(my_GtkFrame2Class_t* class)
 {
     unwrapGtkBin2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkFrame2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkFrame2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2457,7 +2539,7 @@ static void wrapGtkMenuShell2Class(my_GtkMenuShell2Class_t* class)
 static void unwrapGtkMenuShell2Class(my_GtkMenuShell2Class_t* class)
 {
     unwrapGtkContainer2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkMenuShell2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkMenuShell2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2499,7 +2581,7 @@ static void wrapGtkMenuBar2Class(my_GtkMenuBar2Class_t* class)
 static void unwrapGtkMenuBar2Class(my_GtkMenuBar2Class_t* class)
 {
     unwrapGtkMenuShell2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkMenuBar2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkMenuBar2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2567,7 +2649,7 @@ static void wrapGtkTextView2Class(my_GtkTextView2Class_t* class)
 static void unwrapGtkTextView2Class(my_GtkTextView2Class_t* class)
 {
     unwrapGtkContainer2Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkTextView2 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkTextView2 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2637,7 +2719,7 @@ static void wrapGtkTextView3Class(my_GtkTextView3Class_t* class)
 static void unwrapGtkTextView3Class(my_GtkTextView3Class_t* class)
 {
     unwrapGtkContainer3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkTextView3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkTextView3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2679,7 +2761,7 @@ static void wrapGtkGrid3Class(my_GtkGrid3Class_t* class)
 static void unwrapGtkGrid3Class(my_GtkGrid3Class_t* class)
 {
     unwrapGtkContainer3Class(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkGrid3 (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkGrid3 (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2733,7 +2815,7 @@ static void wrapGtkEventControllerClass(my_GtkEventControllerClass_t* class)
 static void unwrapGtkEventControllerClass(my_GtkEventControllerClass_t* class)
 {
     unwrapGObjectClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkEventController (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkEventController (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2787,7 +2869,7 @@ static void wrapGtkGestureClass(my_GtkGestureClass_t* class)
 static void unwrapGtkGestureClass(my_GtkGestureClass_t* class)
 {
     unwrapGtkEventControllerClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkGesture (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkGesture (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2859,7 +2941,7 @@ static void wrapGtkGestureLongPressClass(my_GtkGestureLongPressClass_t* class)
 static void unwrapGtkGestureLongPressClass(my_GtkGestureLongPressClass_t* class)
 {
     unwrapGtkGestureSingleClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GtkGestureLongPress (class->A)
+    #define GO(A, W)   class->A = find_##A##_GtkGestureLongPress (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -2953,7 +3035,7 @@ static void wrapAtkObjectClass(my_AtkObjectClass_t* class)
 static void unwrapAtkObjectClass(my_AtkObjectClass_t* class)
 {
     unwrapGObjectClass(&class->parent);
-    #define GO(A, W)   class->A = find_##A##_AtkObject (class->A)
+    #define GO(A, W)   class->A = find_##A##_AtkObject (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3009,7 +3091,7 @@ static void wrapAtkUtilClass(my_AtkUtilClass_t* class)
 static void unwrapAtkUtilClass(my_AtkUtilClass_t* class)
 {
     unwrapGObjectClass(&class->parent);
-    #define GO(A, W)   class->A = find_##A##_AtkUtil (class->A)
+    #define GO(A, W)   class->A = find_##A##_AtkUtil (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3053,7 +3135,7 @@ static void wrapGstObjectClass(my_GstObjectClass_t* class)
 static void unwrapGstObjectClass(my_GstObjectClass_t* class)
 {
     unwrapGInitiallyUnownedClass(&class->parent);
-    #define GO(A, W)   class->A = find_##A##_GstObject (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstObject (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3099,7 +3181,7 @@ static void wrapGstAllocatorClass(my_GstAllocatorClass_t* class)
 static void unwrapGstAllocatorClass(my_GstAllocatorClass_t* class)
 {
     unwrapGstObjectClass(&class->parent);
-    #define GO(A, W)   class->A = find_##A##_GstAllocator (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstAllocator (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3134,7 +3216,7 @@ WRAPPER(GstAllocatorInstance, mem_unmap_full, void ,(void* mem, void* info), "pp
 static void unwrapGstAllocatorInstance(my_GstAllocator_t* class)
 {
     unwrapGstObjectInstance(&class->parent);
-    #define GO(A, W)   class->A = find_##A##_GstAllocatorInstance (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstAllocatorInstance (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3175,7 +3257,7 @@ static void wrapGstTaskPoolClass(my_GstTaskPoolClass_t* class)
 static void unwrapGstTaskPoolClass(my_GstTaskPoolClass_t* class)
 {
     unwrapGstObjectClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstTaskPool (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstTaskPool (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3249,7 +3331,7 @@ static void wrapGstElementClass(my_GstElementClass_t* class)
 static void unwrapGstElementClass(my_GstElementClass_t* class)
 {
     unwrapGstObjectClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstElement (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstElement (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3308,7 +3390,7 @@ static void wrapGstBinClass(my_GstBinClass_t* class)
 static void unwrapGstBinClass(my_GstBinClass_t* class)
 {
     unwrapGstElementClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstBin (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstBin (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3394,7 +3476,7 @@ static void wrapGstBaseTransformClass(my_GstBaseTransformClass_t* class)
 static void unwrapGstBaseTransformClass(my_GstBaseTransformClass_t* class)
 {
     unwrapGstElementClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstBaseTransform (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstBaseTransform (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3477,7 +3559,7 @@ static void wrapGstVideoDecoderClass(my_GstVideoDecoderClass_t* class)
 static void unwrapGstVideoDecoderClass(my_GstVideoDecoderClass_t* class)
 {
     unwrapGstElementClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstVideoDecoder (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstVideoDecoder (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3556,7 +3638,7 @@ static void wrapGstVideoEncoderClass(my_GstVideoEncoderClass_t* class)
 static void unwrapGstVideoEncoderClass(my_GstVideoEncoderClass_t* class)
 {
     unwrapGstElementClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstVideoEncoder (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstVideoEncoder (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3633,7 +3715,7 @@ static void wrapGstBaseSinkClass(my_GstBaseSinkClass_t* class)
 static void unwrapGstBaseSinkClass(my_GstBaseSinkClass_t* class)
 {
     unwrapGstElementClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstBaseSink (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstBaseSink (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3677,7 +3759,7 @@ static void wrapGstVideoSinkClass(my_GstVideoSinkClass_t* class)
 static void unwrapGstVideoSinkClass(my_GstVideoSinkClass_t* class)
 {
     unwrapGstBaseSinkClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstVideoSink (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstVideoSink (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3723,7 +3805,7 @@ static void wrapGstGLBaseFilterClass(my_GstGLBaseFilterClass_t* class)
 static void unwrapGstGLBaseFilterClass(my_GstGLBaseFilterClass_t* class)
 {
     unwrapGstBaseTransformClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstGLBaseFilter (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstGLBaseFilter (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3773,7 +3855,7 @@ static void wrapGstGLFilterClass(my_GstGLFilterClass_t* class)
 static void unwrapGstGLFilterClass(my_GstGLFilterClass_t* class)
 {
     unwrapGstGLBaseFilterClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstGLFilter (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstGLFilter (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3859,7 +3941,7 @@ static void wrapGstAggregatorClass(my_GstAggregatorClass_t* class)
 static void unwrapGstAggregatorClass(my_GstAggregatorClass_t* class)
 {
     unwrapGstElementClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstAggregator (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstAggregator (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3907,7 +3989,7 @@ static void wrapGstVideoAggregatorClass(my_GstVideoAggregatorClass_t* class)
 static void unwrapGstVideoAggregatorClass(my_GstVideoAggregatorClass_t* class)
 {
     unwrapGstAggregatorClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstVideoAggregator (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstVideoAggregator (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -3951,7 +4033,7 @@ static void wrapGstPadClass(my_GstPadClass_t* class)
 static void unwrapGstPadClass(my_GstPadClass_t* class)
 {
     unwrapGstObjectClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstPad (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstPad (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4014,8 +4096,8 @@ WRAPPER(GstPadInstance, eventfullfunc, int    , (void* pad, void* parent, void* 
 static void unwrapGstPadInstance(my_GstPad_t* class)
 {
     unwrapGstObjectInstance(&class->parent);
-    #define GO(A, W)   class->A = find_##A##_GstPadInstance (class->A)
-    #define GO2(B, A, W)   class->B.A = find_##A##_GstPadInstance (class->B.A)
+    #define GO(A, W)   class->A = find_##A##_GstPadInstance (W, class->A)
+    #define GO2(B, A, W)   class->B.A = find_##A##_GstPadInstance (W, class->B.A)
     SUPERGO()
     #undef GO2
     #undef GO
@@ -4052,7 +4134,7 @@ static void wrapGstAggregatorPadClass(my_GstAggregatorPadClass_t* class)
 static void unwrapGstAggregatorPadClass(my_GstAggregatorPadClass_t* class)
 {
     unwrapGstPadClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstAggregatorPad (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstAggregatorPad (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4102,7 +4184,7 @@ static void wrapGstVideoAggregatorPadClass(my_GstVideoAggregatorPadClass_t* clas
 static void unwrapGstVideoAggregatorPadClass(my_GstVideoAggregatorPadClass_t* class)
 {
     unwrapGstAggregatorPadClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstVideoAggregatorPad (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstVideoAggregatorPad (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4181,7 +4263,7 @@ static void wrapGstBaseSrcClass(my_GstBaseSrcClass_t* class)
 static void unwrapGstBaseSrcClass(my_GstBaseSrcClass_t* class)
 {
     unwrapGstElementClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstBaseSrc (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstBaseSrc (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4227,7 +4309,7 @@ static void wrapGstPushSrcClass(my_GstPushSrcClass_t* class)
 static void unwrapGstPushSrcClass(my_GstPushSrcClass_t* class)
 {
     unwrapGstBaseSrcClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstPushSrc (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstPushSrc (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4273,7 +4355,7 @@ static void wrapGstGLBaseSrcClass(my_GstGLBaseSrcClass_t* class)
 static void unwrapGstGLBaseSrcClass(my_GstGLBaseSrcClass_t* class)
 {
     unwrapGstPushSrcClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstGLBaseSrc (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstGLBaseSrc (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4349,7 +4431,7 @@ static void wrapGstAudioDecoderClass(my_GstAudioDecoderClass_t* class)
 static void unwrapGstAudioDecoderClass(my_GstAudioDecoderClass_t* class)
 {
     unwrapGstElementClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstAudioDecoder (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstAudioDecoder (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4395,7 +4477,7 @@ static void wrapGstVideoFilterClass(my_GstVideoFilterClass_t* class)
 static void unwrapGstVideoFilterClass(my_GstVideoFilterClass_t* class)
 {
     unwrapGstBaseTransformClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstVideoFilter (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstVideoFilter (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4437,7 +4519,7 @@ static void wrapGstAudioFilterClass(my_GstAudioFilterClass_t* class)
 static void unwrapGstAudioFilterClass(my_GstAudioFilterClass_t* class)
 {
     unwrapGstBaseTransformClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GstAudioFilter (class->A)
+    #define GO(A, W)   class->A = find_##A##_GstAudioFilter (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4460,6 +4542,108 @@ static void bridgeGstAudioFilterInstance(my_GstAudioFilter_t* class)
 {
     bridgeGstBaseTransformInstance(&class->parent);
 }
+// ----- GstBufferPoolClass ------
+// wrapper x86 -> natives of callbacks
+WRAPPER(GstBufferPool, get_options, void*,(void* pool), "p", pool);
+WRAPPER(GstBufferPool, set_config, int ,(void* pool, void* config), "pp", pool, config);
+WRAPPER(GstBufferPool, start, int ,(void* pool), "p", pool);
+WRAPPER(GstBufferPool, stop, int ,(void* pool), "p", pool);
+WRAPPER(GstBufferPool, acquire_buffer, int ,(void* pool, void* buffer, void* params), "ppp", pool, buffer, params);
+WRAPPER(GstBufferPool, alloc_buffer, int ,(void* pool, void* buffer, void* params), "ppp", pool, buffer, params);
+WRAPPER(GstBufferPool, reset_buffer, void ,(void* pool, void* buffer), "pp", pool, buffer);
+WRAPPER(GstBufferPool, release_buffer, void ,(void* pool, void* buffer), "pp", pool, buffer);
+WRAPPER(GstBufferPool, free_buffer, void ,(void* pool, void* buffer), "pp", pool, buffer);
+WRAPPER(GstBufferPool, flush_start, void ,(void* pool), "p", pool);
+WRAPPER(GstBufferPool, flush_stop, void ,(void* pool), "p", pool);
+
+#define SUPERGO()               \
+    GO(get_options, pFp);       \
+    GO(set_config, iFpp);       \
+    GO(start, iFp);             \
+    GO(stop, iFp);              \
+    GO(acquire_buffer, iFppp);  \
+    GO(alloc_buffer, iFppp);    \
+    GO(reset_buffer, vFpp);     \
+    GO(release_buffer, vFpp);   \
+    GO(free_buffer, vFpp);      \
+    GO(flush_start, vFp);       \
+    GO(flush_stop, vFp);        \
+
+// wrap (so bridge all calls, just in case)
+static void wrapGstBufferPoolClass(my_GstBufferPoolClass_t* class)
+{
+    wrapGstObjectClass(&class->object_class);
+    #define GO(A, W) class->A = reverse_##A##_GstBufferPool (W, class->A)
+    SUPERGO()
+    #undef GO
+}
+// unwrap (and use callback if not a native call anymore)
+static void unwrapGstBufferPoolClass(my_GstBufferPoolClass_t* class)
+{
+    unwrapGstObjectClass(&class->object_class);
+    #define GO(A, W)   class->A = find_##A##_GstBufferPool (W, class->A)
+    SUPERGO()
+    #undef GO
+}
+// autobridge
+static void bridgeGstBufferPoolClass(my_GstBufferPoolClass_t* class)
+{
+    bridgeGstObjectClass(&class->object_class);
+    #define GO(A, W) autobridge_##A##_GstBufferPool (W, class->A)
+    SUPERGO()
+    #undef GO
+}
+#undef SUPERGO
+
+static void unwrapGstBufferPoolInstance(my_GstBufferPool_t* class)
+{
+    unwrapGstObjectInstance(&class->object);
+}
+// autobridge
+static void bridgeGstBufferPoolInstance(my_GstBufferPool_t* class)
+{
+    bridgeGstObjectInstance(&class->object);
+}
+// ----- GstVideoBufferPoolClass ------
+// wrapper x86 -> natives of callbacks
+
+#define SUPERGO()               \
+
+// wrap (so bridge all calls, just in case)
+static void wrapGstVideoBufferPoolClass(my_GstVideoBufferPoolClass_t* class)
+{
+    wrapGstBufferPoolClass(&class->parent);
+    #define GO(A, W) class->A = reverse_##A##_GstVideoBufferPool (W, class->A)
+    SUPERGO()
+    #undef GO
+}
+// unwrap (and use callback if not a native call anymore)
+static void unwrapGstVideoBufferPoolClass(my_GstVideoBufferPoolClass_t* class)
+{
+    unwrapGstBufferPoolClass(&class->parent);
+    #define GO(A, W)   class->A = find_##A##_GstVideoBufferPool (W, class->A)
+    SUPERGO()
+    #undef GO
+}
+// autobridge
+static void bridgeGstVideoBufferPoolClass(my_GstVideoBufferPoolClass_t* class)
+{
+    bridgeGstBufferPoolClass(&class->parent);
+    #define GO(A, W) autobridge_##A##_GstBufferPool (W, class->A)
+    SUPERGO()
+    #undef GO
+}
+#undef SUPERGO
+
+static void unwrapGstVideoBufferPoolInstance(my_GstVideoBufferPool_t* class)
+{
+    unwrapGstBufferPoolInstance(&class->bufferpool);
+}
+// autobridge
+static void bridgeGstVideoBufferPoolInstance(my_GstVideoBufferPool_t* class)
+{
+    bridgeGstBufferPoolInstance(&class->bufferpool);
+}
 // ----- GDBusProxyClass ------
 // wrapper x86 -> natives of callbacks
 WRAPPER(GDBusProxy, g_properties_changed, void, (void* proxy, void* changed_properties, const char* const* invalidated_properties), "ppp", proxy, changed_properties, invalidated_properties);
@@ -4481,7 +4665,7 @@ static void wrapGDBusProxyClass(my_GDBusProxyClass_t* class)
 static void unwrapGDBusProxyClass(my_GDBusProxyClass_t* class)
 {
     unwrapGObjectClass(&class->parent_class);
-    #define GO(A, W)   class->A = find_##A##_GDBusProxy (class->A)
+    #define GO(A, W)   class->A = find_##A##_GDBusProxy (W, class->A)
     SUPERGO()
     #undef GO
 }
@@ -4530,7 +4714,7 @@ static void wrapGstURIHandlerInterface(my_GstURIHandlerInterface_t* iface)
 static void unwrapGstURIHandlerInterface(my_GstURIHandlerInterface_t* iface)
 {
     // parent don't need wrazpping
-    #define GO(A, W)   iface->A = find_##A##_GstURIHandler (iface->A)
+    #define GO(A, W)   iface->A = find_##A##_GstURIHandler (W, iface->A)
     SUPERGO()
     #undef GO
 }
@@ -4573,7 +4757,7 @@ int checkRegisteredClass(size_t klass)
 }
 
 // g_type_class_peek_parent
-static void wrapGTKClass(void* cl, size_t type)
+void wrapGTKClass(void* cl, size_t type)
 {
     #define GTKIFACE(A)
     #define GTKCLASS(A)                             \
@@ -4595,7 +4779,7 @@ static void wrapGTKClass(void* cl, size_t type)
     #undef GTKIFACE
 }
 
-static void unwrapGTKClass(void* cl, size_t type)
+void unwrapGTKClass(void* cl, size_t type)
 {
     #define GTKIFACE(A)
     #define GTKCLASS(A)                             \
@@ -4801,39 +4985,12 @@ void* unwrapCopyGTKInterface(void* iface, size_t type)
 
 // gtk_type_class
 
-#define GO(A) \
-static void* my_gclassallu_ref_##A = NULL;   \
-static my_GClassAll_t my_gclassallu_##A;
-
-SUPER()
-#undef GO
 void* wrapCopyGTKClass(void* klass, size_t type)
 {
     if(!klass) return klass;
     while(checkRegisteredClass(type))
         type = g_type_parent(type);
     printf_log(LOG_DEBUG, "wrapCopyGTKClass(%p, %zd (%s))\n", klass, type, g_type_name(type));
-    #define GO(A) if(klass == my_gclassallu_ref_##A) return &my_gclassallu_##A;
-    SUPER()
-    #undef GO
-    // check if class is the exact type we know
-    int sz = 0;
-    #define GTKIFACE(A)
-    #define GTKCLASS(A) if(type==my_##A) sz = sizeof(my_##A##Class_t); else
-    GTKCLASSES()
-    if(type==8) {}  // GInterface have no structure
-    else {
-        if(my_MetaFrames2==(size_t)-1 && !strcmp(g_type_name(type), "MetaFrames")) {
-            my_MetaFrames2 = type;
-            sz = sizeof(my_MetaFrames2Class_t);
-        } else {
-            printf_log(LOG_NONE, "Warning, wrapCopyGTKClass called with unknown class type 0x%zx (%s)\n", type, g_type_name(type));
-            return klass;
-        }
-    }
-    #undef GTKIFACE
-    #undef GTKCLASS
-    (void)sz;
     bridgeGTKClass(klass, type);
     return klass;
 }
@@ -4844,27 +5001,6 @@ void* wrapCopyGTKInterface(void* iface, size_t type)
     while(checkRegisteredClass(type))
         type = g_type_parent(type);
     printf_log(LOG_DEBUG, "wrapCopyGTKInterface(%p, %zd (%s))\n", iface, type, g_type_name(type));
-    #define GO(A) if(iface == my_gclassallu_ref_##A) return &my_gclassallu_##A;
-    SUPER()
-    #undef GO
-    // check if class is the exact type we know
-    int sz = 0;
-    #define GTKIFACE(A) if(type==my_##A) sz = sizeof(my_##A##Interface_t); else
-    #define GTKCLASS(A)
-    GTKCLASSES()
-    if(type==8) {}  // GInterface have no structure
-    else {
-        if(my_MetaFrames2==(size_t)-1 && !strcmp(g_type_name(type), "MetaFrames")) {
-            my_MetaFrames2 = type;
-            sz = sizeof(my_MetaFrames2Class_t);
-        } else {
-            printf_log(LOG_NONE, "Warning, wrapCopyGTKInterface called with unknown class type 0x%zx (%s)\n", type, g_type_name(type));
-            return iface;
-        }
-    }
-    #undef GTKIFACE
-    #undef GTKCLASS
-    (void)sz;
     bridgeGTKInterface(iface, type);
     return iface;
 }
@@ -5289,18 +5425,16 @@ static int my_class_init_##A(void* a, void* b)                              \
     while(checkRegisteredClass(type))                                       \
         type = g_type_parent(type);                                         \
     unwrapGTKClass(a, type);                                                \
-    bridgeGTKClass(a, type);                                                \
     my_unwrap_signal_offset(a);                                             \
     if(!strcmp(g_type_name(type), "AtkUtil")) {                             \
         my_AtkUtilClass_t* p = (my_AtkUtilClass_t*)g_type_class_peek(type);\
         unwrapGTKClass(p, type);                                            \
-        bridgeGTKClass(p, type);                                            \
     }                                                                       \
     return ret;                                                             \
 }
 SUPER()
 #undef GO
-static void* find_class_init_Fct(void* fct, size_t parent)
+void* find_class_init_Fct(void* fct, size_t parent)
 {
     if(!fct) return fct;
     if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
@@ -5410,7 +5544,6 @@ static int my_gtk_class_init_##A(void* g_class) {   \
     printf_log(LOG_DEBUG, "Calling fct_gtk_class_init_" #A " wrapper\n");           \
     int ret = (int)RunFunctionFmt(fct_gtk_class_init_##A, "p", g_class);\
     unwrapGTKClass(g_class, fct_gtk_parent_##A);                                    \
-    bridgeGTKClass(g_class, fct_gtk_parent_##A);                                    \
     return ret;                                                                     \
 }   \
 static uintptr_t fct_gtk_object_init_##A = 0;                                           \
@@ -5439,16 +5572,17 @@ my_GtkTypeInfo_t* findFreeGtkTypeInfo(my_GtkTypeInfo_t* fcts, size_t parent)
         my_gtktypeinfo_##A.type_name = fcts->type_name; \
         my_gtktypeinfo_##A.object_size = fcts->object_size; \
         my_gtktypeinfo_##A.class_size = fcts->class_size; \
-        my_gtktypeinfo_##A.class_init_func = (fcts->class_init_func)?((GetNativeFnc((uintptr_t)fcts->class_init_func))?GetNativeFnc((uintptr_t)fcts->class_init_func):my_gtk_class_init_##A):NULL;    \
+        my_gtktypeinfo_##A.class_init_func = (fcts->class_init_func)?((GetNativeFnc((uintptr_t)fcts->class_init_func))?GetNativeFnc((uintptr_t)fcts->class_init_func):(void*)my_gtk_class_init_##A):NULL;    \
         fct_gtk_class_init_##A = (uintptr_t)fcts->class_init_func;           \
-        my_gtktypeinfo_##A.object_init_func = (fcts->object_init_func)?((GetNativeFnc((uintptr_t)fcts->object_init_func))?GetNativeFnc((uintptr_t)fcts->object_init_func):my_gtk_object_init_##A):NULL;    \
+        my_gtktypeinfo_##A.object_init_func = (fcts->object_init_func)?((GetNativeFnc((uintptr_t)fcts->object_init_func))?GetNativeFnc((uintptr_t)fcts->object_init_func):(void*)my_gtk_object_init_##A):NULL;    \
         fct_gtk_object_init_##A = (uintptr_t)fcts->object_init_func;         \
         my_gtktypeinfo_##A.reserved_1 = fcts->reserved_1;                 \
         my_gtktypeinfo_##A.reserved_2 = fcts->reserved_2;                 \
-        my_gtktypeinfo_##A.base_class_init_func = (fcts->base_class_init_func)?((GetNativeFnc((uintptr_t)fcts->base_class_init_func))?GetNativeFnc((uintptr_t)fcts->base_class_init_func):my_gtk_base_class_init_##A):NULL;    \
+        my_gtktypeinfo_##A.base_class_init_func = (fcts->base_class_init_func)?((GetNativeFnc((uintptr_t)fcts->base_class_init_func))?GetNativeFnc((uintptr_t)fcts->base_class_init_func):(void*)my_gtk_base_class_init_##A):NULL;    \
         fct_gtk_base_class_init_##A = (uintptr_t)fcts->base_class_init_func;   \
         return &my_gtktypeinfo_##A;                       \
     }
+
     SUPER()
     #undef GO
     printf_log(LOG_NONE, "Warning, no more slot for GtkTypeInfo callback\n");
@@ -5525,74 +5659,3 @@ void SetGTypeParent(void* f)
     g_type_parent = f;
 }
 
-my_signal_t* new_mysignal(void* f, void* data, void* destroy)
-{
-    my_signal_t* sig = (my_signal_t*)box_calloc(1, sizeof(my_signal_t));
-    sig->sign = SIGN;
-    sig->c_handler = (uintptr_t)f;
-    sig->destroy = (uintptr_t)destroy;
-    sig->data = data;
-    int ret;
-    kh_put(signalmap, my_signalmap, (uintptr_t)sig, &ret);
-    return sig;
-}
-void my_signal_delete(my_signal_t* sig)
-{
-    khint_t k = kh_get(signalmap, my_signalmap, (uintptr_t)sig);
-    if(k!=kh_end(my_signalmap)) {
-        kh_del(signalmap, my_signalmap, k);
-    } else {
-        printf_log(LOG_NONE, "Warning, my_signal_delete called with an unrefereced signal!\n");
-    }
-    uintptr_t d = sig->destroy;
-    if(d) {
-        RunFunctionFmt(d, "p", sig->data);
-    }
-    printf_log(LOG_DEBUG, "gtk Data deleted, sig=%p, data=%p, destroy=%p\n", sig, sig->data, (void*)d);
-    box_free(sig);
-}
-int my_signal_is_valid(void* sig)
-{
-    khint_t k = kh_get(signalmap, my_signalmap, (uintptr_t)sig);
-    if(k!=kh_end(my_signalmap)) {
-        /*if(((my_signal_t*)c)->sign == SIGN)
-            return 1;
-        else
-            printf_log(LOG_NONE, "Warning, incohrent my_signal_t structure referenced\n");*/
-        return 1;
-    }
-    return 0;
-}
-
-int my_signal_cb(void* a, void* b, void* c, void* d)
-{
-    // signal can have many signature... so first job is to find the data!
-    // hopefully, no callback have more than 4 arguments...
-    my_signal_t* sig = NULL;
-    int i = 0;
-    if(my_signal_is_valid(a)) {
-        sig = (my_signal_t*)a;
-        i = 1;
-    }
-    if(!sig && my_signal_is_valid(b)) {
-        sig = (my_signal_t*)b;
-        i = 2;
-    }
-    if(!sig && my_signal_is_valid(c)) {
-        sig = (my_signal_t*)c;
-        i = 3;
-    }
-    if(!sig && my_signal_is_valid(d)) {
-        sig = (my_signal_t*)d;
-        i = 4;
-    }
-    printf_log(LOG_DEBUG, "gtk Signal called, sig=%p, NArgs=%d\n", sig, i);
-    switch(i) {
-        case 1: return (int)RunFunctionFmt(sig->c_handler, "p", sig->data);
-        case 2: return (int)RunFunctionFmt(sig->c_handler, "pp", a, sig->data);
-        case 3: return (int)RunFunctionFmt(sig->c_handler, "ppp", a, b, sig->data);
-        case 4: return (int)RunFunctionFmt(sig->c_handler, "pppp", a, b, c, sig->data);
-    }
-    printf_log(LOG_NONE, "Warning, Gtk signal callback but no data found!");
-    return 0;
-}

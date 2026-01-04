@@ -26,7 +26,6 @@
 #include "debug.h"
 #include "box64stack.h"
 #include "x64emu.h"
-#include "x64run.h"
 #include "x64emu_private.h"
 #include "x64trace.h"
 #include "myalign.h"
@@ -127,7 +126,7 @@ static const scwrap_t syscallwrap[] = {
     //{ 185, __NR_capset, 2},
     //{ 186, __NR_sigaltstack, 2 },    // neeed wrap or something?
     //{ 191, __NR_ugetrlimit, 2 },
-//    { 192, __NR_mmap2, 6},
+    //{ 192, __NR_mmap2, 6},
     //{ 195, __NR_stat64, 2 },  // need proprer wrap because of structure size change
     //{ 196, __NR_lstat64, 2 }, // need proprer wrap because of structure size change
     //{ 197, __NR_fstat64, 2 },  // need proprer wrap because of structure size change
@@ -266,7 +265,7 @@ void EXPORT x86Syscall(x64emu_t *emu)
             R_EAX = R_EBX; // faking the syscall here, we don't want to really terminate the thread now
             break;
         /*case 123:   // SYS_modify_ldt
-            R_EAX = my_modify_ldt(emu, R_EBX, (thread_area_t*)(uintptr_t)R_ECX, R_EDX);
+            R_EAX = my32_modify_ldt(emu, R_EBX, (thread_area_t*)(uintptr_t)R_ECX, R_EDX);
             if(R_EAX==0xffffffff && errno>0)
                 R_EAX = (uint32_t)-errno;
             break;*/

@@ -7,6 +7,7 @@ typedef struct cleanup_s cleanup_t;
 
 #include <elf.h>
 #include "elfloader.h"
+#include "box32.h"
 
 typedef struct multiblock_s {
     void*       p;
@@ -22,27 +23,48 @@ typedef struct elfheader_s {
     char*       name;
     char*       path;   // Resolved path to file
     char*       soname; // soname of the elf
-    size_t      numPHEntries;
-    Elf64_Phdr  *PHEntries;
-    size_t      numSHEntries;
-    Elf64_Shdr  *SHEntries;
+    uint16_t    numPHEntries;
+    union {
+        Elf64_Phdr* _64;
+        Elf32_Phdr* _32;
+    }           PHEntries;
+    uint16_t    numSHEntries;
+    union {
+        Elf64_Shdr* _64;
+        Elf32_Shdr* _32;
+    }           SHEntries;
     size_t      SHIdx;
     size_t      numSST;
     char*       SHStrTab;
     char*       StrTab;
-    Elf64_Sym*  SymTab;
+    union {
+        Elf64_Sym*  _64;
+        Elf32_Sym*  _32;
+    }           SymTab;
     size_t      numSymTab;
     char*       DynStr;
-    Elf64_Sym*  DynSym;
+    union {
+        Elf64_Sym*  _64;
+        Elf32_Sym*  _32;
+    }           DynSym;
     size_t      numDynSym;
-    Elf64_Dyn*  Dynamic;
+    union {
+        Elf64_Dyn*  _64;
+        Elf32_Dyn*  _32;
+    }           Dynamic;
     size_t      numDynamic;
     char*       DynStrTab;
     size_t      szDynStrTab;
-    Elf64_Half* VerSym;
-    Elf64_Verneed*  VerNeed;
+    uint16_t*   VerSym;
+    union {
+        Elf64_Verneed*  _64;
+        Elf32_Verneed*  _32;
+    }           VerNeed;
     int         szVerNeed;
-    Elf64_Verdef*   VerDef;
+    union {
+        Elf64_Verdef*   _64;
+        Elf32_Verdef*   _32;
+    }           VerDef;
     int         szVerDef;
     int         e_type;
     uint32_t    flags;
@@ -123,6 +145,7 @@ typedef struct elfheader_s {
 
 } elfheader_t;
 
+#ifndef R_X86_64_NONE
 #define R_X86_64_NONE           0       /* No reloc */
 #define R_X86_64_64             1       /* Direct 64 bit  */
 #define R_X86_64_PC32           2       /* PC relative 32 bit signed */
@@ -166,31 +189,38 @@ typedef struct elfheader_s {
                                         /* 40 Reserved was R_X86_64_PLT32_BND */
 #define R_X86_64_GOTPCRELX      41      /* Load from 32 bit signed pc relative offset to GOT entry without REX prefix, relaxable.  */
 #define R_X86_64_REX_GOTPCRELX  42      /* Load from 32 bit signed pc relative offset to GOT entry with REX prefix, relaxable.  */
+#endif
 #define R_X86_64_NUM            43
 
 #ifndef STB_GNU_UNIQUE
 #define STB_GNU_UNIQUE  10
 #endif
 
-#ifndef ELF64_ST_VISIBILITY
-#define ELF64_ST_VISIBILITY(o)   ((o) & 0x03)
+#ifndef ELF32_ST_VISIBILITY
+#define ELF32_ST_VISIBILITY(o)  ((o) & 0x03)
 #endif
 
-elfheader_t* ParseElfHeader(FILE* f, const char* name, int exec);
+#ifndef ELF64_ST_VISIBILITY
+#define ELF64_ST_VISIBILITY(o)  ELF32_ST_VISIBILITY (o)
+#endif
+
+elfheader_t* ParseElfHeader32(FILE* f, const char* name, int exec);
+elfheader_t* ParseElfHeader64(FILE* f, const char* name, int exec);
 
 const char* BindSym(int bind);
+const char* BindSymFriendly(int bind);
 
-Elf64_Half GetSymbolVersionFlag(elfheader_t* h, int index);
+uint16_t GetSymbolVersionFlag(elfheader_t* h, int index);
 
 uint32_t old_elf_hash(const char* name);
-Elf64_Sym* old_elf_lookup(elfheader_t* h, const char* symname, int ver, const char* vername, int local, int veropt);
-void old_elf_hash_dump(elfheader_t* h);
 uint32_t new_elf_hash(const char *name);
-Elf64_Sym* new_elf_lookup(elfheader_t* h, const char* symname, int ver, const char* vername, int local, int veropt);
-void new_elf_hash_dump(elfheader_t* h);
 
-Elf64_Sym* ElfLookup(elfheader_t* h, const char* symname, int ver, const char* vername, int local, int veropt);
-Elf64_Sym* ElfSymTabLookup(elfheader_t* h, const char* symname);
-Elf64_Sym* ElfDynSymLookup(elfheader_t* h, const char* symname);
+Elf32_Sym* ElfLookup32(elfheader_t* h, const char* symname, int ver, const char* vername, int local, int veropt);
+Elf32_Sym* ElfSymTabLookup32(elfheader_t* h, const char* symname);
+Elf32_Sym* ElfDynSymLookup32(elfheader_t* h, const char* symname);
+
+Elf64_Sym* ElfLookup64(elfheader_t* h, const char* symname, int ver, const char* vername, int local, int veropt);
+Elf64_Sym* ElfSymTabLookup64(elfheader_t* h, const char* symname);
+Elf64_Sym* ElfDynSymLookup64(elfheader_t* h, const char* symname);
 
 #endif //__ELFLOADER_PRIVATE_H_

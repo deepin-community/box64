@@ -1,3 +1,32 @@
+box64 (0.3.8+dfsg-1) unstable; urgency=medium
+
+  * New upstream version 0.3.8
+  * debian/copyright: exclude tests/misc/gclosure and tests/test32
+  * debian/copyright: exclude auto-generated documentation
+  * debian/*.examples: install install_steam.sh as an example script
+  * debian/*.install: install box32.conf into /usr/lib/binfmt.d
+  * debian/*.examples: install box64-bundle-x86-libs.sh as an example script
+  * debian/*.docs: fix X64WINE.md->WINE.md and add BUNDLE-X86-LIBS.md
+  * debian/control,debian/tests/control: wrap-and-sort -astb
+  * add patch to fix typos
+  * debian/rules: build docs/USAGE.md and docs/box64.pod
+
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Sun, 19 Oct 2025 03:29:45 +0200
+
+box64 (0.3.4+dfsg-1) unstable; urgency=medium
+
+  [ Johannes Schauer Marin Rodrigues ]
+  * debian/control: add Vcs-* headers.
+    Thanks to Otto Kekäläinen <otto@debian.org>
+  * debian/copyright: exclude new binaries
+  * drop patches
+  * debian/rules: build box32
+
+  [ Otto Kekäläinen ]
+  * Update git repository layout to follow DEP14 and DEP18
+
+ -- Johannes Schauer Marin Rodrigues <josch@debian.org>  Thu, 24 Apr 2025 11:54:47 +0200
+
 box64 (0.3.0+dfsg-1) unstable; urgency=medium
 
   * New upstream version 0.3.0+dfsg

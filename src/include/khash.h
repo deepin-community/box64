@@ -217,6 +217,22 @@ static const double __ac_HASH_UPPER = 0.77;
 			h->size = h->n_occupied = 0;								\
 		}																\
 	}																	\
+	SCOPE khint_t kh_hash_##name(khkey_t key) {							\
+		return __hash_func(key);										\
+	}																	\
+	SCOPE khint_t kh_get_##name##_with_hash(const kh_##name##_t *h, khkey_t key, khint_t hash) { \
+		if (h->n_buckets) {												\
+			khint_t k = hash, i, last, mask, step = 0; \
+			mask = h->n_buckets - 1;									\
+			i = k & mask;												\
+			last = i; \
+			while (!__ac_isempty(h->flags, i) && (__ac_isdel(h->flags, i) || !__hash_equal(h->keys[i], key))) { \
+				i = (i + (++step)) & mask; \
+				if (i == last) return h->n_buckets;						\
+			}															\
+			return __ac_iseither(h->flags, i)? h->n_buckets : i;		\
+		} else return 0;												\
+	}																	\
 	SCOPE khint_t kh_get_##name(const kh_##name##_t *h, khkey_t key) 	\
 	{																	\
 		if (h->n_buckets) {												\
@@ -463,6 +479,24 @@ static kh_inline khint_t __ac_Wang_hash(khint_t key)
 #define kh_put(name, h, k, r) kh_put_##name(h, k, r)
 
 /*! @function
+  @abstract     Hash a key.
+  @param  name  Name of the hash table [symbol]
+  @param  key   Key [type of keys]
+  @return       Hash value [khint_t]
+ */
+#define kh_hash(name, key) kh_hash_##name(key)
+
+/*! @function
+  @abstract     Retrieve a key from the hash table with a given hash value.
+  @param  name  Name of the hash table [symbol]
+  @param  h     Pointer to the hash table [khash_t(name)*]
+  @param  k     Key [type of keys]
+  @param  hash  Hash value [khint_t]
+  @return       Iterator to the found element, or kh_end(h) if the element is absent [khint_t]
+ */
+#define kh_get_with_hash(name, h, k, hash) kh_get_##name##_with_hash(h, k, hash)
+
+/*! @function
   @abstract     Retrieve a key from the hash table.
   @param  name  Name of the hash table [symbol]
   @param  h     Pointer to the hash table [khash_t(name)*]
@@ -549,6 +583,21 @@ static kh_inline khint_t __ac_Wang_hash(khint_t key)
 		if (!kh_exist(h,__i)) continue;						\
 		(kvar) = kh_key(h,__i);								\
 		(vvar) = kh_val(h,__i);								\
+		code;												\
+	} }
+
+/*! @function
+  @abstract     Iterate over the entries in the hash table
+  @param  h     Pointer to the hash table [khash_t(name)*]
+  @param  kvar  Variable to which key will be assigned
+  @param  vvar  Variable to which value will be assigned
+  @param  code  Block of code to execute
+ */
+#define kh_foreach_ref(h, kvar, rvar, code) { khint_t __i;	\
+	for (__i = kh_begin(h); __i != kh_end(h); ++__i) {		\
+		if (!kh_exist(h,__i)) continue;						\
+		(kvar) = kh_key(h,__i);								\
+		(rvar) = &kh_val(h,__i);							\
 		code;												\
 	} }
 
