@@ -1633,7 +1633,7 @@ void inplace_FT_Glyph_shrink(void* a)
         dst_b->top = src_b->top;
         convert_FT_Bitmap_to_32(&dst_b->bitmap, &src_b->bitmap);
     } else {
-        printf_log(LOG_NONE, "BOX32: Warning, unsupported glyph format 0x%x (%c%c%c%c)\n", dst->format, dst->format>>24, (dst->format>>16)&0xff, (dst->format>>8)&0xff, dst->format&0xff);
+        printf_log(LOG_NONE, "Warning, unsupported glyph format 0x%x (%c%c%c%c)\n", dst->format, dst->format >> 24, (dst->format >> 16) & 0xff, (dst->format >> 8) & 0xff, dst->format & 0xff);
     }
 }
 
@@ -2335,7 +2335,7 @@ EXPORT void* my32_FT_Get_Sfnt_Table(x64emu_t* emu, void* face, int tag)
         case 5: convert_TT_Postscript_to_32(&tt_post, ret); return &tt_post;
         case 6: convert_TT_PCLT_to_32(&tt_pclt, ret); return &tt_pclt;
     }
-    printf_log(LOG_NONE, "BOX32: Warning, unsupported type %d for FT_Get_Sfnt_Table\n", tag);
+    printf_log(LOG_NONE, "Warning, unsupported type %d for FT_Get_Sfnt_Table\n", tag);
     return ret;
 }
 
@@ -2532,7 +2532,7 @@ EXPORT int my32_FT_Get_MM_Var(x64emu_t* emu, void* face, FT_MM_Var_32_t* amaster
         amaster->axis = to_ptrv(p);
         FT_Var_Axis_32_t* axis = p;
         p += amaster_l->num_axis*sizeof(FT_Var_Axis_32_t);
-        for(int i=0; i<amaster_l->num_axis; ++i) {
+        for(uint32_t i=0; i<amaster_l->num_axis; ++i) {
             axis[i].name = to_cstring(amaster_l->axis[i].name);
             axis[i].minimum = to_long(amaster_l->axis[i].minimum);
             axis[i].def = to_long(amaster_l->axis[i].def);
@@ -2546,11 +2546,11 @@ EXPORT int my32_FT_Get_MM_Var(x64emu_t* emu, void* face, FT_MM_Var_32_t* amaster
         amaster->axis = to_ptrv(p);
         FT_Var_Named_Style_32_t* axis = p;
         p += amaster_l->num_axis*sizeof(FT_Var_Named_Style_32_t);
-        for(int i=0; i<amaster_l->num_namedstyles; ++i) {
+        for(uint32_t i=0; i<amaster_l->num_namedstyles; ++i) {
             axis[i].coords = to_ptrv(p);
             long_t* coords = p;
             p += sizeof(long_t)*amaster_l->num_axis;
-            for(int j=0; j<amaster_l->num_axis; ++j)
+            for(uint32_t j=0; j<amaster_l->num_axis; ++j)
                 coords[j] = to_long(amaster_l->namedstyle[i].coords[j]);
         }
     } else
@@ -2568,10 +2568,21 @@ EXPORT int my32_FT_Done_MM_Var(x64emu_t* emu, void* face, FT_MM_Var_32_t* amaste
     return ret;
 }
 
+EXPORT int my32_FT_Set_Var_Design_Coordinates(x64emu_t* emu, void* face, uint32_t num_coords, long_t* coords)
+{
+    long coords_l[num_coords];
+    for(uint32_t i=0; i<num_coords; ++i)
+        coords_l[i] = from_long(coords[i]);
+    inplace_FT_FaceRec_enlarge(face);
+    int ret = my->FT_Set_Var_Design_Coordinates(face, num_coords, coords_l);
+    inplace_FT_FaceRec_shrink(face);
+    return ret;
+}
+
 EXPORT int my32_FT_Set_Var_Blend_Coordinates(x64emu_t* emu, void* face, uint32_t num_coords, long_t* coords)
 {
     long coords_l[num_coords];
-    for(int i=0; i<num_coords; ++i)
+    for(uint32_t i=0; i<num_coords; ++i)
         coords_l[i] = from_long(coords[i]);
     inplace_FT_FaceRec_enlarge(face);
     int ret = my->FT_Set_Var_Blend_Coordinates(face, num_coords, coords_l);
@@ -2586,7 +2597,7 @@ EXPORT int my32_FT_Get_Var_Blend_Coordinates(x64emu_t* emu, void* face, uint32_t
     inplace_FT_FaceRec_enlarge(face);
     int ret = my->FT_Get_Var_Blend_Coordinates(face, num_coords, coords_l);
     inplace_FT_FaceRec_shrink(face);
-    for(int i=0; i<num_coords; ++i)
+    for(uint32_t i=0; i<num_coords; ++i)
         coords[i] = to_long(coords_l[i]);
     return ret;
 }
@@ -2622,7 +2633,7 @@ EXPORT int my32_FT_Get_Advances(x64emu_t* emu, void* face, uint32_t start, uint3
     inplace_FT_FaceRec_enlarge(face);
     int ret = my->FT_Get_Advances(face, start, count, flags, advances_l);
     inplace_FT_FaceRec_shrink(face);
-    for(int i=0; i<count; ++i)
+    for(uint32_t i=0; i<count; ++i)
         padvances[i] = to_long(advances_l[i]);
     return ret;
 }

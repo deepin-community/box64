@@ -97,6 +97,7 @@ typedef struct flagcache_s {
 } flagcache_t;
 
 typedef struct callret_s callret_t;
+typedef struct sep_s sep_t;
 
 typedef struct instruction_rv64_s {
     instruction_x64_t   x64;
@@ -146,6 +147,7 @@ typedef struct dynarec_rv64_s {
     uintptr_t           start;      // start of the block
     uintptr_t           end;        // maximum end of the block (only used in pass0)
     uint32_t            isize;      // size in byte of x64 instructions included
+    uint32_t            prefixsize; // size in byte of the prefix of the block
     void*               block;      // memory pointer where next instruction is emitted
     uintptr_t           native_start;  // start of the riscv code
     size_t              native_size;   // size of emitted riscv code
@@ -168,7 +170,9 @@ typedef struct dynarec_rv64_s {
     instsize_t*         instsize;
     size_t              insts_size; // size of the instruction size array (calculated)
     int                 callret_size;   // size of the array
-    callret_t*          callrets;   // arrey of callret return, with NOP / UDF depending if the block is clean or dirty
+    int                 sep_size;   // size of the array
+    callret_t*          callrets;   // array of callret return, with NOP / UDF depending if the block is clean or dirty
+    sep_t*              sep;        // array of secondary entry point
     uint8_t             smwrite;    // for strongmem model emulation
     uintptr_t           forward;    // address of the last end of code while testing forward
     uintptr_t           forward_to; // address of the next jump to (to check if everything is ok)
@@ -203,7 +207,6 @@ void add_jump(dynarec_rv64_t *dyn, int ninst);
 int get_first_jump(dynarec_rv64_t *dyn, int next);
 int get_first_jump_addr(dynarec_rv64_t *dyn, uintptr_t next);
 int is_nops(dynarec_rv64_t *dyn, uintptr_t addr, int n);
-int is_instructions(dynarec_rv64_t *dyn, uintptr_t addr, int n);
 
 int isTable64(dynarec_rv64_t *dyn, uint64_t val); // return 1 if val already in Table64
 int Table64(dynarec_rv64_t *dyn, uint64_t val, int pass);  // add a value to table64 (if needed) and gives back the imm19 to use in LDR_literal

@@ -11,3 +11,7 @@
 [riscv64] debian/tmp.RV64/etc/box64.box64rc /etc
 [riscv64] debian/tmp.RV64/etc/binfmt.d/box64.conf /usr/lib/binfmt.d
 [riscv64] debian/tmp.RV64/etc/binfmt.d/box32.conf /usr/lib/binfmt.d
+[loong64] debian/tmp.LARCH64/usr/bin/box64 /usr/bin
+[loong64] debian/tmp.LARCH64/etc/box64.box64rc /etc
+[loong64] debian/tmp.LARCH64/etc/binfmt.d/box64.conf /usr/lib/binfmt.d
+[loong64] debian/tmp.LARCH64/etc/binfmt.d/box32.conf /usr/lib/binfmt.d

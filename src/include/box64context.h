@@ -88,13 +88,12 @@ void add1libref_neededlib(needed_libs_t* needed, library_t* lib);
 typedef struct base_segment_s {
     uintptr_t       base;
     uint64_t        limit;
-    pthread_key_t   key;
     uint8_t         present;
     uint8_t         is32bits;
-    uint8_t         key_init;
 } base_segment_t;
 
 typedef struct box64context_s {
+    uint32_t            tick;           // for dynarec age
     path_collection_t   box64_path;     // PATH env. variable
     path_collection_t   box64_ld_lib;   // LD_LIBRARY_PATH env. variable
 
@@ -102,8 +101,6 @@ typedef struct box64context_s {
 
     int                 x64trace;
     int                 trace_tid;
-
-    uint32_t            sel_serial;     // will be increment each time selectors changes
 
     zydis_t             *zydis;         // dlopen the zydis dissasembler
     void*               box64lib;       // dlopen on box64 itself
@@ -123,6 +120,7 @@ typedef struct box64context_s {
     char*               box64path;      // path of current box64 executable
     char*               box86path;      // path of box86 executable (if present)
     char*               bashpath;       // path of x86_64 bash (defined with BOX64_BASH or by running bash directly)
+    char*               pythonpath;     // path of x86_64 python3 (defined with BOX64_PYTHON3)
 
     uint64_t            stacksz;
     size_t              stackalign;
@@ -154,6 +152,8 @@ typedef struct box64context_s {
     kh_symbolmap_t      *almymap;       // link to the mysymbolmap if libOpenAL
     kh_symbolmap_t      *vkwrappers;    // the map of wrapper for VulkanProcs (TODO: check SDL2)
     kh_symbolmap_t      *vkmymap;       // link to the mysymbolmap of libGL
+    kh_symbolmap_t      *cudawrappers;  // the map of wrapper for cuda
+    kh_symbolmap_t      *mycuda;        // link to the mysymbolmap of cuda
     vkprocaddess_t      vkprocaddress;
 
     #ifndef DYNAREC
@@ -202,16 +202,17 @@ typedef struct box64context_s {
     int                 deferredInitSz;
     int                 deferredInitCap;
 
-    pthread_key_t       tlskey;     // then tls key to have actual tlsdata
     void*               tlsdata;    // the initial global tlsdata
     int64_t             tlssize;    // wanted size of tlsdata
-    base_segment_t      segtls[16];
+    base_segment_t      seggdt[16];
 
     uintptr_t           *auxval_start;
 
     cleanup_t           *cleanups;          // atexit functions
     int                 clean_sz;
     int                 clean_cap;
+
+    void*               video_mem;
 
     zydis_dec_t         *dec;           // trace
     zydis_dec_t         *dec32;         // trace

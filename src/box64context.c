@@ -72,17 +72,6 @@ int getrand(int maxval)
 
 }
 
-void free_tlsdatasize(void* p)
-{
-    if(!p)
-        return;
-    tlsdatasize_t *data = (tlsdatasize_t*)p;
-    actual_free(data->ptr);
-    actual_free(p);
-    if(my_context)
-        pthread_setspecific(my_context->tlskey, NULL);
-}
-
 void x64Syscall(x64emu_t *emu);
 void x86Syscall(x64emu_t *emu);
 
@@ -146,20 +135,25 @@ static void atfork_child_box64context(void)
     init_mutexes(my_context);
 }
 
+int box64_cycle_log_initialized = 0;
+
 void freeCycleLog(box64context_t* ctx)
 {
-    if(BOX64ENV(rolling_log)) {
+    if (BOX64ENV(rolling_log) && box64_cycle_log_initialized) {
         box_free(ctx->log_call);
         box_free(ctx->log_ret);
         ctx->log_call = NULL;
         ctx->log_ret = NULL;
+        box64_cycle_log_initialized = 0;
     }
 }
+
 void initCycleLog(box64context_t* context)
 {
     if(context && BOX64ENV(rolling_log)) {
         context->log_call = (char*)box_calloc(BOX64ENV(rolling_log), 256*sizeof(char));
         context->log_ret = (char*)box_calloc(BOX64ENV(rolling_log), 128*sizeof(char));
+        box64_cycle_log_initialized = 1;
     }
 }
 
@@ -178,7 +172,6 @@ box64context_t *NewBox64Context(int argc)
     initCycleLog(context);
 
     context->deferredInit = 1;
-    context->sel_serial = 1;
 
     init_custommem_helper(context);
 
@@ -217,28 +210,25 @@ box64context_t *NewBox64Context(int argc)
     init_mutexes(context);
     pthread_atfork(NULL, NULL, atfork_child_box64context);
 
-    pthread_key_create(&context->tlskey, free_tlsdatasize);
-
-
     for (int i=0; i<8; ++i) context->canary[i] = 1 +  getrand(255);
     context->canary[getrand(4)] = 0;
     printf_log(LOG_DEBUG, "Setting up canary (for Stack protector) at FS:0x28, value:%08X\n", *(uint32_t*)context->canary);
 
     // init segments
     for(int i=0; i<16; i++) {
-        context->segtls[i].limit = (uintptr_t)-1LL;
+        context->seggdt[i].limit = (uintptr_t)-1LL;
     }
-    context->segtls[10].key_init = 0;    // 0x53 selector
-    context->segtls[10].present = 1;
-    context->segtls[8].key_init = 0;    // 0x43 selector
-    context->segtls[8].present = 1;
-    context->segtls[6].key_init = 0;    // 0x33 selector
-    context->segtls[6].present = 1;
-    context->segtls[5].key_init = 0;    // 0x2b selector
-    context->segtls[5].present = 1;
-    context->segtls[4].key_init = 0;    // 0x23 selector
-    context->segtls[4].present = 1;
-    context->segtls[4].is32bits = 1;
+    // 0x53 selector
+    context->seggdt[10].present = 1;
+    // 0x43 selector
+    context->seggdt[8].present = 1;
+    // 0x33 selector
+    context->seggdt[6].present = 1;
+    // 0x2b selector
+    context->seggdt[5].present = 1;
+    // 0x23 selector
+    context->seggdt[4].present = 1;
+    context->seggdt[4].is32bits = 1;
 
     context->globdata = NewMapSymbols();
     context->uniques = NewMapSymbols();
@@ -253,6 +243,7 @@ box64context_t *NewBox64Context(int argc)
 }
 
 void freeALProcWrapper(box64context_t* context);
+void freeCUDAProcWrapper(box64context_t* context);
 EXPORTDYN
 void FreeBox64Context(box64context_t** context)
 {
@@ -263,6 +254,11 @@ void FreeBox64Context(box64context_t** context)
         return;
 
     box64context_t* ctx = *context;   // local copy to do the cleaning
+
+    if(ctx->video_mem) {
+        munmap(ctx->video_mem, 0x10000);
+        ctx->video_mem = NULL;
+    }
 
     //clean_current_emuthread();    // cleaning main thread seems a bad idea
     if(ctx->local_maplib)
@@ -316,12 +312,14 @@ void FreeBox64Context(box64context_t** context)
     box_free(ctx->fullpath);
     box_free(ctx->box64path);
     box_free(ctx->bashpath);
+    box_free(ctx->pythonpath);
 
     FreeBridge(&ctx->system);
 
     #ifndef STATICBUILD
     freeGLProcWrapper(ctx);
     freeALProcWrapper(ctx);
+    freeCUDAProcWrapper(ctx);
     #ifdef BOX32
     #endif
     #endif
@@ -329,12 +327,6 @@ void FreeBox64Context(box64context_t** context)
     if(ctx->stack_clone)
         box_free(ctx->stack_clone);
 
-
-    void* ptr;
-    if ((ptr = pthread_getspecific(ctx->tlskey)) != NULL) {
-        free_tlsdatasize(ptr);
-    }
-    pthread_key_delete(ctx->tlskey);
 
     if(ctx->tlsdata)
         box_free(ctx->tlsdata);
@@ -395,8 +387,6 @@ void RemoveElfHeader(box64context_t* ctx, elfheader_t* head) {
         /*if(tlsbase == -ctx->tlssize) {
             // not really correct, but will do for now
             ctx->tlssize -= GetTLSSize(head);
-            if(!(++ctx->sel_serial))
-                ++ctx->sel_serial;
         }*/
     }
     for(int i=0; i<ctx->elfsize; ++i)
@@ -413,12 +403,7 @@ int AddTLSPartition(box64context_t* context, int tlssize) {
     context->tlsdata = box_realloc(context->tlsdata, context->tlssize);
     memmove(context->tlsdata+tlssize, context->tlsdata, oldsize);   // move to the top, using memmove as regions will probably overlap
     memset(context->tlsdata, 0, tlssize);           // fill new space with 0 (not mandatory)
-    // clean GS segment for current emu
-    if(my_context) {
-        //ResetSegmentsCache(thread_get_emu());
-        if(!(++context->sel_serial))
-            ++context->sel_serial;
-    }
+    // clean GS segment for current emu?
 
     return -context->tlssize;   // negative offset
 }

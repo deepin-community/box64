@@ -27,10 +27,12 @@
 #include "elfloader.h"
 #endif
 
+extern int running32bits;
 #ifdef DYNAREC
 void* LinkNext(x64emu_t* emu, uintptr_t addr, void* x2, uintptr_t* x3)
 {
     int is32bits = (R_CS == 0x23);
+    if(!running32bits && is32bits) running32bits=1;
     #ifdef HAVE_TRACE
     uintptr_t new_addr = (uintptr_t)getAlternate((void*)addr);
     if(!addr) {
@@ -48,12 +50,14 @@ void* LinkNext(x64emu_t* emu, uintptr_t addr, void* x2, uintptr_t* x3)
         dynablock_t* db = FindDynablockFromNativeAddress(x2-4);
         printf_log(LOG_INFO, "Warning, jumping to an unmapped address %p->%p from %p (db=%p, x64addr=%p/%s)\n", (void*)new_addr, (void*)addr, x2-4, db, db?(void*)getX64Address(db, (uintptr_t)x2-4):NULL, db?getAddrFunctionName(getX64Address(db, (uintptr_t)x2-4)):"(nil)");
     }
+    #else   //HAVE_TRACE
+    uintptr_t new_addr = addr;
     #endif
     void * jblock;
     dynablock_t* block = NULL;
+    uintptr_t old_addr = addr;
     if(hasAlternate((void*)addr)) {
         printf_log(LOG_DEBUG, "Jmp address has alternate: %p\n", (void*)addr);
-        uintptr_t old_addr = addr;
         addr = (uintptr_t)getAlternate((void*)addr);    // set new address
         R_RIP = addr;   // but also new RIP!
         *x3 = addr; // and the RIP in x27 register
@@ -90,6 +94,17 @@ void* LinkNext(x64emu_t* emu, uintptr_t addr, void* x2, uintptr_t* x3)
         // null block, but done: go to epilog, no linker here
         return native_epilog;
     }
+    if(block->sep_size && (uintptr_t)block->x64_addr!=old_addr) {
+        jblock = NULL;
+        for(int i=0; i<block->sep_size && !jblock; ++i) {
+            if(old_addr==(uintptr_t)block->x64_addr + block->sep[i].x64_offs)
+                jblock = block->block + block->sep[i].nat_offs;
+        }
+        if(!jblock) {
+            printf_log(LOG_NONE, "Warning, cannot find Secondary Entry Point %p in dynablock %p\n", new_addr, block);
+            return native_epilog;
+        }
+    }
     //dynablock_t *father = block->father?block->father:block;
     return jblock;
 }
@@ -118,7 +133,8 @@ void DynaCall(x64emu_t* emu, uintptr_t addr)
         PushExit(emu);
     R_RIP = addr;
     emu->df = d_none;
-    DynaRun(emu);
+    emu->flags.need_jmpbuf = 1;
+    EmuRun(emu, 1);
     emu->quit = 0;  // reset Quit flags...
     emu->df = d_none;
     if(emu->flags.quitonlongjmp && emu->flags.longjmp) {
@@ -141,8 +157,7 @@ void DynaCall(x64emu_t* emu, uintptr_t addr)
     }
 }
 
-extern int running32bits;
-void DynaRun(x64emu_t* emu)
+void EmuRun(x64emu_t* emu, int use_dynarec)
 {
     // prepare setjump for signal handling
     JUMPBUFF jmpbuf[1] = {0};
@@ -166,7 +181,7 @@ void DynaRun(x64emu_t* emu)
             if ((skip = SigSetJmp(emu->jmpbuf, 1)))
             #endif
             {
-                dynarec_log(LOG_DEBUG, "Setjmp DynaRun, fs=0x%x will %sskip dynarec next\n", emu->segs[_FS], (skip==3)?"not ":"");
+                dynarec_log(LOG_DEBUG, "Setjmp EmuRun, fs=0x%x will %sskip dynarec next\n", emu->segs[_FS], (skip==3)?"not ":"");
                 #ifdef DYNAREC
                 if(BOX64ENV(dynarec_test)) {
                     if(emu->test.clean)
@@ -182,7 +197,7 @@ void DynaRun(x64emu_t* emu)
             emu->flags.need_jmpbuf = 0;
 
 #ifdef DYNAREC
-        if(!BOX64ENV(dynarec))
+        if(!BOX64ENV(dynarec) || !use_dynarec)
 #endif
             Run(emu, 0);
 #ifdef DYNAREC
@@ -203,7 +218,7 @@ void DynaRun(x64emu_t* emu)
                     running32bits = 1;
                 }
             }
-            dynablock_t* block = (skip)?NULL:DBGetBlock(emu, R_RIP, 1, is32bits);
+            dynablock_t* block = (skip || ACCESS_FLAG(F_TF))?NULL:DBGetBlock(emu, R_RIP, 1, is32bits);
             if(!block || !block->block || !block->done || ACCESS_FLAG(F_TF)) {
                 skip = 0;
                 // no block, of block doesn't have DynaRec content (yet, temp is not null)
@@ -223,7 +238,19 @@ void DynaRun(x64emu_t* emu)
                     CHECK_FLAGS(emu);
                 }
                 // block is here, let's run it!
-                native_prolog(emu, block->block);
+                void* jblock = block->block;
+                if(block->sep_size && R_RIP!=(uintptr_t)block->x64_addr) {
+                    jblock = NULL;
+                    for(int i=0; i<block->sep_size && !jblock; ++i) {
+                        if(R_RIP==(uintptr_t)block->x64_addr + block->sep[i].x64_offs)
+                            jblock = block->block + block->sep[i].nat_offs;
+                    }
+                }
+                if(!jblock) {
+                    printf_log(LOG_NONE, "Warning, cannot find Secondary Entry Point %p in dynablock %p\n", (void*)R_RIP, block);
+                    skip = 1;
+                } else
+                    native_prolog(emu, jblock);
             }
             if(emu->fork) {
                 int forktype = emu->fork;
@@ -241,4 +268,9 @@ void DynaRun(x64emu_t* emu)
     #ifdef RV64
     emu->xSPSave = old_savesp;
     #endif
+}
+
+void DynaRun(x64emu_t *emu)
+{
+    EmuRun(emu, 1);
 }

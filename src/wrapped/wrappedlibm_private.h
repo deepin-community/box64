@@ -40,8 +40,8 @@ GOW(cacos, XFX)
 GOW(cacosf, xFx)
 GOW(cacosh, XFX)
 GOW(cacoshf, xFx)
-// cacoshl  // Weak
-// cacosl   // Weak
+GOWD(cacoshl, YFY, cacosh)
+GOWD(cacosl, YFY, cacos)
 GOW(carg, XFX)
 GOW(cargf, xFx)
 // cargl    // Weak
@@ -49,14 +49,14 @@ GOW(casin, XFX)
 GOW(casinf, xFx)
 GOW(casinh, XFX)
 GOW(casinhf, xFx)
-// casinhl  // Weak
-// casinl   // Weak
+GOWD(casinhl, YFY, casinh)
+GOWD(casinl, YFY, casin)
 GOW(catan, XFX)
 GOW(catanf, xFx)
 GOW(catanh, XFX)
 GOW(catanhf, xFx)
-// catanhl  // Weak
-// catanl   // Weak
+GOWD(catanhl, YFY, catanh)
+GOWD(catanl, YFY, catan)
 GOW(cbrt, dFd)
 GOW(cbrtf, fFf)
 GOWD(cbrtl, DFD, cbrt)
@@ -123,9 +123,9 @@ GOW(ctanhf, xFx)
 GOWD(ctanhl, YFY, ctanh)
 GOWD(ctanl, YFY, ctan)
 // __cxa_finalize  // Weak
-// drem // Weak
-// dremf    // Weak
-// dreml    // Weak
+GOW(drem, dFdd)
+GOW(dremf, fFff)
+// GOW(dreml,
 GOW(erf, dFd)
 GOW(erfc, dFd)
 GOW(erfcf, fFf)
@@ -152,11 +152,11 @@ GOW(expm1f, fFf)
 GOWD(expm1l, DFD, expm1)
 GOW(fabs, dFd)
 GOW(fabsf, fFf)
-// fabsl    // Weak
+GOWD(fabsl, DFD, fabs)
 GOW(fdim, dFdd)
 GOW(fdimf, fFff)
 // fdiml    // Weak
-GO(feclearexcept, iFi)
+GOM(feclearexcept, iFEi)
 GO(fedisableexcept, iFi)
 GO(feenableexcept, iFi)
 GO(fegetenv, iFp)
@@ -164,11 +164,11 @@ GO(fegetexcept, iFv)
 GO(fegetexceptflag, iFpi)
 GOM(fegetround, iFEv)
 GO(feholdexcept, iFp)
-GO(feraiseexcept, iFi)
+GOM(feraiseexcept, iFEi)
 GO(fesetenv, iFp)
 GO(fesetexceptflag, iFpi)
 GOM(fesetround, iFEi)
-GO(fetestexcept, iFi)
+GOM(fetestexcept, iFEi)
 GO(feupdateenv, iFp)
 GOW(finite, iFd)
 // __finite
@@ -184,10 +184,10 @@ GOW(fmaf, fFfff)
 GOWD(fmal, DFDDD, fma)
 GOW(fmax, dFdd)
 GOW(fmaxf, fFff)
-// fmaxl    // Weak
+GOWD(fmaxl, DFDD, fmax)
 GOW(fmin, dFdd)
 GOW(fminf, fFff)
-// fminl    // Weak
+GOWD(fminl, DFDD, fmin)
 GOW(fmod, dFdd)
 GOW(fmodf, fFff)
 GOM(__fmodf_finite, fFff)
@@ -198,8 +198,8 @@ GO(__fpclassifyf, iFf)
 GOW(frexp, dFdp)
 GOW(frexpf, fFfp)
 GOWD(frexpl, DFDp, frexp)
-// gamma    // Weak
-// gammaf   // Weak
+GOW(gamma, dFd)
+GOW(gammaf, fFf)
 // __gammaf_r_finite
 // gammal   // Weak
 // __gamma_r_finite
@@ -315,15 +315,15 @@ GOW(remquof, fFffp)
 // remquol  // Weak
 GOWM(rint, dFEd)
 GOWM(rintf, fFEf)
-// rintl    // Weak
+GOWD(rintl, DFD, rint)
 GOW(round, dFd)
 GOW(roundf, fFf)
 GO(roundeven, dFd)  //since C23
 GO(roundevenf, fFf)
 //GO(roundevenl, DFD)
 GOWD(roundl, DFD, round)
-// scalb    // Weak
-// scalbf   // Weak
+GOW(scalb, dFdd)
+GOW(scalbf, fFff)
 // __scalbf_finite
 // __scalb_finite
 // scalbl   // Weak
@@ -336,8 +336,8 @@ GOW(scalbnf, fFfi)
 // __signbit
 // __signbitf
 DATAB(signgam, 8)
-// significand  // Weak
-// significandf // Weak
+GOW(significand, dFd)
+GOW(significandf, fFf)
 // significandl // Weak
 GOW(sin, dFd)
 GOW(sincos, vFdpp)
@@ -366,7 +366,7 @@ GOW(tgammaf, fFf)
 GOWD(tgammal, DFD, tgamma)
 GOW(trunc, dFd)
 GOW(truncf, fFf)
-// truncl   // Weak
+GOWD(truncl, DFD, trunc)
 GO(y0, dFd)
 GO(y0f, fFf)
 // __y0f_finite

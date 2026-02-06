@@ -1,3 +1,9 @@
+box64 (0.4.0+dfsg-0deepin1) unstable; urgency=medium
+
+  * New upstream version 0.4.0
+
+ -- Chang Yang <yangchang@deepin.org>  Fri, 06 Feb 2026 10:09:08 +0800
+
 box64 (0.3.8+dfsg-1) unstable; urgency=medium
 
   * New upstream version 0.3.8

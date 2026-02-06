@@ -15,15 +15,18 @@ Vcs-Git: https://salsa.debian.org/debian/box64.git
 Rules-Requires-Root: no
 
 Package: box64
-Architecture: arm64 ppc64el riscv64
+Architecture: arm64 ppc64el riscv64 loong64
 Depends:
  libgcc-s1:amd64 | libgcc-s1-amd64-cross,
  libstdc++6:amd64 | libstdc++6-amd64-cross,
  ${misc:Depends},
  ${shlibs:Depends},
 Conflicts:
+ box64-rk3399,
  box64-rk3588,
+ box64-rpi3,
  box64-rpi4,
+ box64-rpi5,
 Description: run amd64 binaries on arm64 without emulating library calls
  Using DynaRec on arm64, box64 will dynamically recompile x64_64 code to
  aarch64 but will also translate calls to foreign library functions to
@@ -35,6 +38,27 @@ Description: run amd64 binaries on arm64 without emulating library calls
  This package contains the generic executable without optimization for a
  specific platform.
 
+Package: box64-rk3399
+Architecture: arm64
+Depends:
+ libgcc-s1:amd64 | libgcc-s1-amd64-cross,
+ libstdc++6:amd64 | libstdc++6-amd64-cross,
+ ${misc:Depends},
+ ${shlibs:Depends},
+Conflicts:
+ box64,
+ box64-rk3588,
+ box64-rpi3,
+ box64-rpi4,
+ box64-rpi5,
+Description: run amd64 binaries on RK3399 without emulating library calls
+ Using DynaRec on arm64, box64 will dynamically recompile x64_64 code to
+ aarch64 but will also translate calls to foreign library functions to
+ native library calls. This usually makes amd64 executables run via
+ box64 much faster than emulating amd64 on arm64 via qemu which will
+ emulate everything down to the C library. For example OpenArena emulated
+ with box64 will be at about 85% of its native speed.
+
 Package: box64-rk3588
 Architecture: arm64
 Depends:
@@ -44,7 +68,10 @@ Depends:
  ${shlibs:Depends},
 Conflicts:
  box64,
+ box64-rk3399,
+ box64-rpi3,
  box64-rpi4,
+ box64-rpi5,
 Description: run amd64 binaries on RK3588 without emulating library calls
  Using DynaRec on arm64, box64 will dynamically recompile x64_64 code to
  aarch64 but will also translate calls to foreign library functions to
@@ -56,6 +83,27 @@ Description: run amd64 binaries on RK3588 without emulating library calls
  This package is optimized with -mcpu=cortex-a76.cortex-a55+crypto and
  built with workaround for incoherent si_info on SIGSEGV.
 
+Package: box64-rpi3
+Architecture: arm64
+Depends:
+ libgcc-s1:amd64 | libgcc-s1-amd64-cross,
+ libstdc++6:amd64 | libstdc++6-amd64-cross,
+ ${misc:Depends},
+ ${shlibs:Depends},
+Conflicts:
+ box64,
+ box64-rk3399,
+ box64-rk3588,
+ box64-rpi4,
+ box64-rpi5,
+Description: run amd64 binaries on RPI5 without emulating library calls
+ Using DynaRec on arm64, box64 will dynamically recompile x64_64 code to
+ aarch64 but will also translate calls to foreign library functions to
+ native library calls. This usually makes amd64 executables run via
+ box64 much faster than emulating amd64 on arm64 via qemu which will
+ emulate everything down to the C library. For example OpenArena emulated
+ with box64 will be at about 85% of its native speed.
+
 Package: box64-rpi4
 Architecture: arm64
 Depends:
@@ -65,7 +113,10 @@ Depends:
  ${shlibs:Depends},
 Conflicts:
  box64,
+ box64-rk3399,
  box64-rk3588,
+ box64-rpi3,
+ box64-rpi5,
 Description: run amd64 binaries on RPI4 without emulating library calls
  Using DynaRec on arm64, box64 will dynamically recompile x64_64 code to
  aarch64 but will also translate calls to foreign library functions to
@@ -75,3 +126,24 @@ Description: run amd64 binaries on RPI4 without emulating library calls
  with box64 will be at about 85% of its native speed.
  .
  This package is optimized with -march=armv8-a+crc -mtune=cortex-a72.
+
+Package: box64-rpi5
+Architecture: arm64
+Depends:
+ libgcc-s1:amd64 | libgcc-s1-amd64-cross,
+ libstdc++6:amd64 | libstdc++6-amd64-cross,
+ ${misc:Depends},
+ ${shlibs:Depends},
+Conflicts:
+ box64,
+ box64-rk3399,
+ box64-rk3588,
+ box64-rpi3,
+ box64-rpi4,
+Description: run amd64 binaries on RPI5 without emulating library calls
+ Using DynaRec on arm64, box64 will dynamically recompile x64_64 code to
+ aarch64 but will also translate calls to foreign library functions to
+ native library calls. This usually makes amd64 executables run via
+ box64 much faster than emulating amd64 on arm64 via qemu which will
+ emulate everything down to the C library. For example OpenArena emulated
+ with box64 will be at about 85% of its native speed.

@@ -1,0 +1,4 @@
+debian/tmp.RPI5ARM64/etc/binfmt.d/box32.conf /usr/lib/binfmt.d
+debian/tmp.RPI5ARM64/etc/binfmt.d/box64.conf /usr/lib/binfmt.d
+debian/tmp.RPI5ARM64/etc/box64.box64rc /etc
+debian/tmp.RPI5ARM64/usr/bin/box64 /usr/bin

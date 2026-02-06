@@ -1,6 +1,24 @@
 #define _LARGEFILE_SOURCE 1
 #define _FILE_OFFSET_BITS 64
 #define _GNU_SOURCE         /* See feature_test_macros(7) */
+#if !defined(TERMUX) && !defined(ANDROID)
+# if defined(__has_include)
+#  if __has_include(<argp.h>)
+#   include <argp.h>
+#   define HAVE_ARGP 1
+#  endif
+# else
+#  include <argp.h>
+#  define HAVE_ARGP 1
+# endif
+#endif
+#ifndef HAVE_ARGP
+struct argp;
+struct argp_state;
+#endif
+#ifdef STATICBUILD
+extern int _nl_msg_cat_cntr __attribute__((weak));
+#endif
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -70,6 +88,7 @@
 #include "wine_tools.h"
 #include "pe_tools.h"
 #include "cleanup.h"
+#include "random.h"
 #ifndef LOG_INFO
 #define LOG_INFO 1
 #endif
@@ -112,6 +131,27 @@ typedef void* (*pFpip_t)(void*, int, void*);
 #define ADDED_FUNCTIONS() \
 
 #include "generated/wrappedlibctypes.h"
+
+EXPORT uintptr_t my_error_print_progname = 0;
+static void (*native_error_print_progname)(void) = NULL;
+
+static void my_wrap_error_print_progname(void)
+{
+    if (my_error_print_progname) {
+        RunFunctionFmt(my_error_print_progname, "v");
+        return;
+    }
+    if (native_error_print_progname)
+        native_error_print_progname();
+}
+
+#define ADDED_INIT()                                                                  \
+    void (**p)(void);                                                                 \
+    p = (void (**)(void))dlsym(lib->w.lib, "error_print_progname");                   \
+    if (p) {                                                                          \
+        native_error_print_progname = *p;                                             \
+        *p = my_wrap_error_print_progname;                                            \
+    }
 
 #include "wrappercallback.h"
 
@@ -449,7 +489,86 @@ static void* findprintf_typeFct(void* fct)
     return NULL;
 }
 
+// parse_type
+#define GO(A)                                                          \
+    static uintptr_t my_argp_parser_fct_##A = 0;                       \
+    static int my_argp_parser_##A(int a, void* b, void* c)             \
+    {                                                                  \
+        return RunFunctionFmt(my_argp_parser_fct_##A, "ipp", a, b, c); \
+    }
+SUPER()
+#undef GO
+static void* find_argp_parser_Fct(void* fct)
+{
+    if (!fct) return NULL;
+    void* p;
+    if ((p = GetNativeFnc((uintptr_t)fct))) return p;
+#define GO(A) \
+    if (my_argp_parser_fct_##A == (uintptr_t)fct) return my_argp_parser_##A;
+    SUPER()
+#undef GO
+#define GO(A)                                    \
+    if (my_argp_parser_fct_##A == 0) {           \
+        my_argp_parser_fct_##A = (uintptr_t)fct; \
+        return my_argp_parser_##A;               \
+    }
+    SUPER()
+#undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for libc argp_parser callback\n");
+    return NULL;
+}
+
+// help_filter
+#define GO(A)                                                          \
+    static uintptr_t my_help_filter_fct_##A = 0;                       \
+    static void* my_help_filter_##A(int a, void* b, void* c)             \
+    {                                                                  \
+        return (void*)(uintptr_t)RunFunctionFmt(my_help_filter_fct_##A, "ipp", a, b, c); \
+    }
+SUPER()
+#undef GO
+static void* find_help_filter_Fct(void* fct)
+{
+    if (!fct) return NULL;
+    void* p;
+    if ((p = GetNativeFnc((uintptr_t)fct))) return p;
+#define GO(A) \
+    if (my_help_filter_fct_##A == (uintptr_t)fct) return my_help_filter_##A;
+    SUPER()
+#undef GO
+#define GO(A)                                    \
+    if (my_help_filter_fct_##A == 0) {           \
+        my_help_filter_fct_##A = (uintptr_t)fct; \
+        return my_help_filter_##A;               \
+    }
+    SUPER()
+#undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for libc help_filter callback\n");
+    return NULL;
+}
+
 #undef SUPER
+
+EXPORT int my_argp_parse(x64emu_t* emu, struct argp* argp, int argc, char** argv, int flags, int* index, void* input)
+{
+#if defined(HAVE_ARGP)
+    if (!argp) {
+        return argp_parse(argp, argc, argv, flags, index, input);
+    }
+    struct argp local = *argp;
+    if (local.parser) {
+        local.parser = find_argp_parser_Fct((void*)local.parser);
+    }
+    if (local.help_filter) {
+        local.help_filter = find_help_filter_Fct((void*)local.help_filter);
+    }
+    return argp_parse(&local, argc, argv, flags, index, input);
+#else
+    (void)emu; (void)argp; (void)argc; (void)argv; (void)flags; (void)index; (void)input;
+    printf_log(LOG_NONE, "Warning: unsupported argp_parse called, expecting failure\n");
+    return -1;
+#endif
+}
 
 // some my_XXX declare and defines
 int32_t my___libc_start_main(x64emu_t* emu, int (*main) (int, char * *, char * *),
@@ -537,13 +656,13 @@ pid_t EXPORT my_fork(x64emu_t* emu)
         // error...
     } else if(v>0) {
         // execute atforks parent functions
-        for (int i=0; i<my_context->atfork_sz; --i)
+        for (int i=0; i<my_context->atfork_sz; ++i)
             if(my_context->atforks[i].parent)
                 RunFunctionWithEmu(emu, 0, my_context->atforks[i].parent, 0);
 
     } else /*if(v==0)*/ {
         // execute atforks child functions
-        for (int i=0; i<my_context->atfork_sz; --i)
+        for (int i=0; i<my_context->atfork_sz; ++i)
             if(my_context->atforks[i].child)
                 RunFunctionWithEmu(emu, 0, my_context->atforks[i].child, 0);
     }
@@ -1047,6 +1166,14 @@ EXPORT int my___isoc99_swscanf(x64emu_t* emu, void* stream, void* fmt, uint64_t*
   return vswscanf(stream, fmt, VARARGS);
 }
 
+EXPORT int my___isoc23_swscanf(x64emu_t* emu, void* stream, void* fmt, uint64_t* b)
+{
+    myStackAlignScanfW(emu, (const char*)fmt, b, emu->scratch, 2);
+    PREPARE_VALIST;
+
+    return vswscanf(stream, fmt, VARARGS);
+}
+
 EXPORT int my_vsnprintf(x64emu_t* emu, void* buff, size_t s, void * fmt, x64_va_list_t b) {
     (void)emu;
     #ifdef CONVERT_VALIST
@@ -1127,6 +1254,20 @@ EXPORT int my_swscanf(x64emu_t* emu, void* stream, void* fmt, uint64_t* b)
     return vswscanf(stream, fmt, VARARGS);
 }
 
+EXPORT void my_argp_error(x64emu_t *emu, void* state, void* fmt, void* b) {
+#if defined(HAVE_ARGP)
+    if(!fmt) {
+        argp_error(state, NULL);
+        return;
+    }
+    myStackAlign(emu, (const char*)fmt, b, emu->scratch, R_EAX, 2);
+    PREPARE_VALIST;
+    argp_error(state, fmt, VARARGS);
+#else
+    (void)emu; (void)state; (void)fmt; (void)b;
+#endif
+}
+
 EXPORT void my_error(x64emu_t *emu, int status, int errnum, void* fmt, void* b) {
     myStackAlign(emu, (const char*)fmt, b, emu->scratch, R_EAX, 3);
     PREPARE_VALIST;
@@ -1198,6 +1339,21 @@ EXPORT void my_vwarnx(x64emu_t* emu, void* fmt, x64_va_list_t b) {
     #endif
     return vwarnx(fmt, VARARGS);
 }
+
+EXPORT void my_argp_failure(x64emu_t* emu, void* state, int status, int errnum, void* fmt, void* b) {
+#if defined(HAVE_ARGP)
+    if(!fmt) { 
+        argp_failure(state, status, errnum, NULL); 
+        return; 
+    }
+    myStackAlign(emu, (const char*)fmt, b, emu->scratch, R_EAX, 4);
+    PREPARE_VALIST;
+    argp_failure(state, status, errnum, fmt, VARARGS);
+#else
+    (void)emu; (void)state; (void)status; (void)errnum; (void)fmt; (void)b;
+#endif
+}
+
 EXPORT void my_warn(x64emu_t *emu, void* fmt, void* b) {
     myStackAlign(emu, (const char*)fmt, b, emu->scratch, R_EAX, 1);
     PREPARE_VALIST;
@@ -1287,16 +1443,7 @@ EXPORT int my___fxstat(x64emu_t *emu, int vers, int fd, void* buf)
         UnalignStat64(&st, buf);
     return r;
 }
-
-EXPORT int my___fxstat64(x64emu_t *emu, int vers, int fd, void* buf)
-{
-    (void)emu; (void)vers;
-    struct stat64 st;
-    int r = fstat64(fd, buf?&st:buf);
-    if(buf && !r)
-        UnalignStat64(&st, buf);
-    return r;
-}
+EXPORT int my___fxstat64(x64emu_t *emu, int vers, int fd, void* buf) __attribute__((alias("my___fxstat")));
 
 EXPORT int my_statx(x64emu_t* emu, int dirfd, void* path, int flags, uint32_t mask, void* buf)
 {
@@ -1338,16 +1485,7 @@ EXPORT int my___xstat(x64emu_t* emu, int v, void* path, void* buf)
         UnalignStat64(&st, buf);
     return r;
 }
-
-EXPORT int my___xstat64(x64emu_t* emu, int v, void* path, void* buf)
-{
-    (void)emu; (void)v;
-    struct stat64 st;
-    int r = stat64((const char*)path, buf?&st:buf);
-    if(buf && !r)
-        UnalignStat64(&st, buf);
-    return r;
-}
+EXPORT int my___xstat64(x64emu_t* emu, int v, void* path, void* buf) __attribute__((alias("my___xstat")));
 
 EXPORT int my___lxstat(x64emu_t* emu, int v, void* name, void* buf)
 {
@@ -1358,16 +1496,7 @@ EXPORT int my___lxstat(x64emu_t* emu, int v, void* name, void* buf)
         UnalignStat64(&st, buf);
     return r;
 }
-
-EXPORT int my___lxstat64(x64emu_t* emu, int v, void* name, void* buf)
-{
-    (void)emu; (void)v;
-    struct stat64 st;
-    int r = lstat64((const char*)name, buf?&st:buf);
-    if(buf && !r)
-        UnalignStat64(&st, buf);
-    return r;
-}
+EXPORT int my___lxstat64(x64emu_t* emu, int v, void* name, void* buf) __attribute__((alias("my___lxstat")));
 
 EXPORT int my___fxstatat(x64emu_t* emu, int v, int d, void* path, void* buf, int flags)
 {
@@ -1378,16 +1507,7 @@ EXPORT int my___fxstatat(x64emu_t* emu, int v, int d, void* path, void* buf, int
         UnalignStat64(&st, buf);
     return r;
 }
-
-EXPORT int my___fxstatat64(x64emu_t* emu, int v, int d, void* path, void* buf, int flags)
-{
-    (void)emu; (void)v;
-    struct  stat64 st;
-    int r = fstatat64(d, path, &st, flags);
-    if(!r)
-        UnalignStat64(&st, buf);
-    return r;
-}
+EXPORT int my___fxstatat64(x64emu_t* emu, int v, int d, void* path, void* buf, int flags) __attribute__((alias("my___fxstatat")));
 
 EXPORT int my_stat(x64emu_t *emu, void* filename, void* buf)
 {
@@ -1744,26 +1864,12 @@ EXPORT ssize_t my___readlink_chk(x64emu_t* emu, void* path, void* buf, size_t sz
     return my_readlink(emu, path, buf, sz);
 }
 
-int getNCpu();  // defined in my_cpuid.c
-const char* getBoxCpuName();    // defined in my_cpuid.c
-const char* getCpuName(); // defined in my_cpu_id.c
-double getBogoMips(); // defined in my_cpu_id.c
-
 #ifndef NOALIGN
 void CreateCPUInfoFile(int fd)
 {
     size_t dummy;
     char buff[600];
-    double freq = 600.0; // default to 600 MHz
-    // try to get actual ARM max speed:
-    FILE *f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", "r");
-    if(f) {
-        int r;
-        if(1==fscanf(f, "%d", &r))
-            freq = r/1000.;
-        fclose(f);
-    }
-    int n = getNCpu();
+    int n = box64_sysinfo.box64_ncpu;
     // generate fake CPUINFO
     #define P \
     dummy = write(fd, buff, strlen(buff))
@@ -1776,11 +1882,11 @@ void CreateCPUInfoFile(int fd)
         P;
         sprintf(buff, "model\t\t: 1\n");
         P;
-        sprintf(buff, "model name\t: %s\n", getBoxCpuName());
+        sprintf(buff, "model name\t: %s\n", box64_sysinfo.cpuname);
         P;
         sprintf(buff, "stepping\t: 1\nmicrocode\t: 0x10\n");
         P;
-        sprintf(buff, "cpu MHz\t\t: %g\n", freq);
+        sprintf(buff, "cpu MHz\t\t: %g\n", box64_sysinfo.frequency / 1000000.);
         P;
         sprintf(buff, "cache size\t: %d\n", 4096);
         P;
@@ -1788,13 +1894,16 @@ void CreateCPUInfoFile(int fd)
         P;
         sprintf(buff, "core id\t\t: %d\ncpu cores\t: %d\n", i, n);
         P;
-        sprintf(buff, "bogomips\t: %g\n", getBogoMips());
+        sprintf(buff, "bogomips\t: %g\n", box64_sysinfo.bogomips / 1000000.);
         P;
-        sprintf(buff, "flags\t\t: fpu cx8 sep ht cmov clflush mmx sse sse2 syscall tsc lahf_lm ssse3 ht tm lm fxsr cpuid pclmulqdq cx16 aes movbe pni "\
+        sprintf(buff, "flags\t\t: fpu cx8 sep ht cmov clflush mmx sse sse2 syscall tsc lahf_lm ssse3 ht tm lm fxsr cpuid"\
+                      "%s cx16%s movbe pni "\
                       "sse4_1%s%s%s lzcnt popcnt%s%s%s%s%s%s%s%s%s\n",
+                      BOX64ENV(pclmulqdq)?" pclmulqdq":"",
+                      BOX64ENV(aes)?" aes":"",
                       BOX64ENV(sse42)?" sse4_2":"", BOX64ENV(avx)?" avx":"", BOX64ENV(shaext)?"sha_ni":"",
                       BOX64ENV(avx)?" bmi1":"", BOX64ENV(avx2)?" avx2":"", BOX64ENV(avx)?" bmi2":"",
-                      BOX64ENV(avx2)?" vaes":"", BOX64ENV(avx2)?" fma":"",
+                      (BOX64ENV(avx2)&&BOX64ENV(aes))?" vaes":"", BOX64ENV(avx2)?" fma":"",
                       BOX64ENV(avx)?" xsave":"", BOX64ENV(avx)?" f16c":"", BOX64ENV(avx2)?" randr":"",
                       BOX64ENV(avx2)?" adx":""
                       );
@@ -1811,7 +1920,7 @@ void CreateCPUPresentFile(int fd)
 {
     size_t dummy;
     char buff[600];
-    int n = getNCpu();
+    int n = box64_sysinfo.box64_ncpu;
     // generate fake CPUINFO
     sprintf(buff, "0-%d\n", n-1);
     dummy = write(fd, buff, strlen(buff));
@@ -1969,6 +2078,17 @@ EXPORT int32_t my_open(x64emu_t* emu, void* pathname, int32_t flags, uint32_t mo
         return tmp;
     }
 
+    if(!strcmp((const char*)pathname, "/etc/os-release")) {
+        char* pv = getenv("BOX64_PRESSURE_VESSEL_FILES");
+        if(pv) {
+            char tmp[MAX_PATH] = {0};
+            snprintf(tmp, sizeof(tmp)-1, "%s/lib/os-release", pv);
+            if(FileExist(tmp, IS_FILE)) {
+                return open(tmp, flags, mode);
+            }
+        }
+    }
+
     int ret = open(pathname, flags, mode);
     return ret;
 }
@@ -2046,7 +2166,7 @@ EXPORT int32_t my_open64(x64emu_t* emu, void* pathname, int32_t flags, uint32_t 
         lseek(tmp, 0, SEEK_SET);
         return tmp;
     }
-    if(BOX64ENV(maxcpu) && (!strcmp(pathname, "/sys/devices/system/cpu/present") || !strcmp(pathname, "/sys/devices/system/cpu/online")) && (getNCpu()>=BOX64ENV(maxcpu))) {
+    if (BOX64ENV(maxcpu) && (!strcmp(pathname, "/sys/devices/system/cpu/present") || !strcmp(pathname, "/sys/devices/system/cpu/online")) && (box64_sysinfo.ncpu >= BOX64ENV(maxcpu))) {
         // special case for cpu present (to limit to 64 cores)
         int tmp = shm_open(TMP_CPUPRESENT, O_RDWR | O_CREAT, S_IRWXU);
         if(tmp<0) return open64(pathname, mode); // error fallback
@@ -2117,7 +2237,7 @@ EXPORT FILE* my_fopen64(x64emu_t* emu, const char* path, const char* mode)
         lseek(tmp, 0, SEEK_SET);
         return fdopen(tmp, mode);
     }
-    if(BOX64ENV(maxcpu) && (!strcmp(path, "/sys/devices/system/cpu/present") || !strcmp(path, "/sys/devices/system/cpu/online")) && (getNCpu()>=BOX64ENV(maxcpu))) {
+    if (BOX64ENV(maxcpu) && (!strcmp(path, "/sys/devices/system/cpu/present") || !strcmp(path, "/sys/devices/system/cpu/online")) && (box64_sysinfo.ncpu >= BOX64ENV(maxcpu))) {
         // special case for cpu present (to limit to 64 cores)
         int tmp = shm_open(TMP_CPUPRESENT, O_RDWR | O_CREAT, S_IRWXU);
         if(tmp<0) return fopen64(path, mode); // error fallback
@@ -2212,7 +2332,7 @@ EXPORT int32_t my_epoll_pwait(x64emu_t* emu, int32_t epfd, void* events, int32_t
         UnalignEpollEvent(events, _events, ret);
     return ret;
 }
-EXPORT int my_epoll_pwait2(x64emu_t* emu, int epfd, void* events, int maxevents, struct timespec *timeout, sigset_t * sigmask)
+EXPORT int32_t my_epoll_pwait2(x64emu_t* emu, int epfd, void* events, int maxevents, struct timespec *timeout, sigset_t * sigmask)
 {
     struct epoll_event _events[maxevents];
     //AlignEpollEvent(_events, events, maxevents);
@@ -2326,24 +2446,35 @@ EXPORT int32_t my_execve(x64emu_t* emu, const char* path, char* const argv[], ch
     int x64 = FileIsX64ELF(path);
     int x86 = my_context->box86path?FileIsX86ELF(path):0;
     int script = (my_context->bashpath && FileIsShell(path))?1:0;
-    printf_log(LOG_DEBUG, "execve(\"%s\", %p[\"%s\", \"%s\", \"%s\"...], %p) is x64=%d x86=%d script=%d (my_context->envv=%p, environ=%p\n", path, argv, argv[0], argv[1]?argv[1]:"(nil)", argv[2]?argv[2]:"(nil)", envp, x64, x86, script, my_context->envv, environ);
+    int python = (my_context->pythonpath && FileIsPython(path))?1:0;
+    if(box64env.log>=LOG_DEBUG) {
+        printf_log(LOG_DEBUG, "execve(\"%s\", %p[\"%s\"", path, argv, argv[0]);
+        for(int i=1; argv[i]; ++i)
+            printf_log_prefix(0, LOG_DEBUG, ", \"%s\"", argv[i]);
+        printf_log_prefix(0, LOG_DEBUG, "], %p) is x64=%d x86=%d script=%d python=%d (my_context->envv=%p, environ=%p\n", envp, x64, x86, script, python, my_context->envv, environ);
+    }
     // hack to update the environ var if needed
     if(envp == my_context->envv && environ) {
         envp = environ;
+    } else if(box64env.log>=LOG_DEBUG) {
+        printf_log(LOG_DEBUG, "envv=[\"%s\'", envp[0]);
+        for(int i=1; envp[i]; ++i)
+            printf_log_prefix(0, LOG_DEBUG, ", \"%s\"", envp[i]);
+        printf_log_prefix(0, LOG_DEBUG, "]\n");
     }
-    #if 1
-    if (x64 || x86 || self || script) {
+    if (x64 || x86 || self || script || python) {
         int skip_first = 0;
         if(strlen(path)>=strlen("wine64-preloader") && strcmp(path+strlen(path)-strlen("wine64-preloader"), "wine64-preloader")==0)
             skip_first++;
         // count argv...
         int n=skip_first;
         while(argv[n]) ++n;
-        int toadd = script?2:1;
+        int toadd = (script || python)?2:1;
         const char** newargv = (const char**)alloca((n+1+toadd-skip_first)*sizeof(char*));
         memset(newargv, 0, (n+1+toadd)*sizeof(char*));
         newargv[0] = x86?emu->context->box86path:emu->context->box64path;
         if(script) newargv[1] = emu->context->bashpath; // script needs to be launched with bash
+        if(python) newargv[1] = emu->context->pythonpath; // script needs to be launched with bash
         memcpy(newargv+toadd, argv+skip_first, sizeof(char*)*(n+1-skip_first));
         if(self) newargv[toadd] = emu->context->fullpath;
         else {
@@ -2356,7 +2487,6 @@ EXPORT int32_t my_execve(x64emu_t* emu, const char* path, char* const argv[], ch
         int ret = execve(newargv[0], (char* const*)newargv, envp);
         return ret;
     }
-    #endif
     if(!strcmp(path + strlen(path) - strlen("/uname"), "/uname")
      && argv[1] && (!strcmp(argv[1], "-m") || !strcmp(argv[1], "-p") || !strcmp(argv[1], "-i"))
      && !argv[2]) {
@@ -2434,16 +2564,18 @@ EXPORT int32_t my_execvp(x64emu_t* emu, const char* path, char* const argv[])
     int x64 = FileIsX64ELF(fullpath);
     int x86 = my_context->box86path?FileIsX86ELF(fullpath):0;
     int script = (my_context->bashpath && FileIsShell(fullpath))?1:0;
+    int python = (my_context->pythonpath && FileIsPython(fullpath))?1:0;
     printf_log(LOG_DEBUG, "execvp(\"%s\", %p), IsX86=%d / fullpath=\"%s\"\n", path, argv, x64, fullpath);
-    if (x64 || x86 || script || self) {
+    if (x64 || x86 || script || python || self) {
         // count argv...
         int i=0;
         while(argv[i]) ++i;
-        int toadd = script?2:1;
+        int toadd = (script || python)?2:1;
         char** newargv = (char**)alloca((i+toadd+1)*sizeof(char*));
         memset(newargv, 0, (i+toadd+1)*sizeof(char*));
         newargv[0] = x86?emu->context->box86path:emu->context->box64path;
         if(script) newargv[1] = emu->context->bashpath; // script needs to be launched with bash
+        if(python) newargv[1] = emu->context->pythonpath; // script needs to be launched with bash
         for (int j=0; j<i; ++j)
             newargv[j+toadd] = argv[j];
         if(self) newargv[1] = emu->context->fullpath;
@@ -2745,10 +2877,11 @@ EXPORT int32_t my___register_atfork(x64emu_t *emu, void* prepare, void* parent, 
         my_context->atfork_cap += 4;
         my_context->atforks = (atfork_fnc_t*)box_realloc(my_context->atforks, my_context->atfork_cap*sizeof(atfork_fnc_t));
     }
-    my_context->atforks[my_context->atfork_sz].prepare = (uintptr_t)prepare;
-    my_context->atforks[my_context->atfork_sz].parent = (uintptr_t)parent;
-    my_context->atforks[my_context->atfork_sz].child = (uintptr_t)child;
-    my_context->atforks[my_context->atfork_sz].handle = handle;
+    int i = my_context->atfork_sz++;
+    my_context->atforks[i].prepare = (uintptr_t)prepare;
+    my_context->atforks[i].parent = (uintptr_t)parent;
+    my_context->atforks[i].child = (uintptr_t)child;
+    my_context->atforks[i].handle = handle;
     return 0;
 }
 
@@ -2948,7 +3081,7 @@ void EXPORT my_longjmp(x64emu_t* emu, /*struct __jmp_buf_tag __env[1]*/void *p, 
     R_R15 = jpbuff->save_r15;
     R_RSP = jpbuff->save_rsp;
     // jmp to saved location, plus restore val to rax
-    R_RAX = __val;
+    R_RAX = __val?__val:1;
     R_RIP = jpbuff->save_rip;
     if(((__jmp_buf_tag_t*)p)->__mask_was_saved) {
         sigprocmask(SIG_SETMASK, &((__jmp_buf_tag_t*)p)->__saved_mask, NULL);
@@ -3021,10 +3154,20 @@ EXPORT int my_readlinkat(x64emu_t* emu, int fd, void* path, void* buf, size_t bu
     }
     return readlinkat(fd, path, buf, bufsize);
 }
+
+EXPORT ssize_t my___readlinkat_chk(x64emu_t* emu, int dirfd, void* path, void* buf, size_t sz, size_t buflen)
+{
+    return my_readlinkat(emu, dirfd, path, buf, sz);
+}
+
 extern int have48bits;
 void* last_mmap_addr[2] = {0};
 size_t last_mmap_len[2] = {0};
 int last_mmap_idx = 0;
+#ifdef DYNAREC
+void* last_mmap_0_addr = NULL;
+size_t last_mmap_0_len = 0;
+#endif
 EXPORT void* my_mmap64(x64emu_t* emu, void *addr, size_t length, int prot, int flags, int fd, ssize_t offset)
 {
     (void)emu;
@@ -3083,6 +3226,15 @@ EXPORT void* my_mmap64(x64emu_t* emu, void *addr, size_t length, int prot, int f
             last_mmap_len[last_mmap_idx] = 0;
         }
         last_mmap_idx = 1-last_mmap_idx;
+        #ifdef DYNAREC
+        if(!prot) {
+            last_mmap_0_addr = ret;
+            last_mmap_0_len = length;
+        } else {
+            last_mmap_0_addr = NULL;
+            last_mmap_0_len = 0;
+        }
+        #endif
         if(emu)
             setProtection_mmap((uintptr_t)ret, length, prot);
         else
@@ -3097,6 +3249,10 @@ EXPORT void* my_mmap(x64emu_t* emu, void *addr, size_t length, int prot, int fla
 
 EXPORT void* my_mremap(x64emu_t* emu, void* old_addr, size_t old_size, size_t new_size, int flags, void* new_addr)
 {
+    #ifdef DYNAREC
+    last_mmap_0_addr = NULL;
+    last_mmap_0_len = 0;
+    #endif
     (void)emu;
     if((emu || box64_is32bits) && (BOX64ENV(log)>=LOG_DEBUG || BOX64ENV(dynarec_log)>=LOG_DEBUG)) {printf_log(LOG_NONE, "mremap(%p, %lu, %lu, %d, %p)=>", old_addr, old_size, new_size, flags, new_addr);}
     void* ret = mremap(old_addr, old_size, new_size, flags, new_addr);
@@ -3156,8 +3312,12 @@ EXPORT int my_munmap(x64emu_t* emu, void* addr, size_t length)
         WillRemoveMapping((uintptr_t)addr, length);
     }
     if(!ret && BOX64ENV(dynarec) && length) {
-        cleanDBFromAddressRange((uintptr_t)addr, length, 1);
+        if(last_mmap_0_len && last_mmap_0_addr==addr && last_mmap_0_len==length)
+        {} else // ignore this one
+            cleanDBFromAddressRange((uintptr_t)addr, length, 1);
     }
+    last_mmap_0_addr = NULL;
+    last_mmap_0_len = 0;
     #endif
     if(!ret) {
         last_mmap_addr[1-last_mmap_idx] = NULL;
@@ -3171,6 +3331,10 @@ EXPORT int my_munmap(x64emu_t* emu, void* addr, size_t length)
 
 EXPORT int my_mprotect(x64emu_t* emu, void *addr, unsigned long len, int prot)
 {
+    #ifdef DYNAREC
+    last_mmap_0_addr = NULL;
+    last_mmap_0_len = 0;
+    #endif
     (void)emu;
     if(emu && (BOX64ENV(log)>=LOG_DEBUG || BOX64ENV(dynarec_log)>=LOG_DEBUG)) {printf_log(LOG_NONE, "mprotect(%p, 0x%lx, 0x%x)\n", addr, len, prot);}
     if(prot&PROT_WRITE)
@@ -3519,10 +3683,12 @@ EXPORT uint32_t userdata[1024];
 EXPORT long my_ptrace(x64emu_t* emu, int request, pid_t pid, void* addr, uint32_t* data)
 {
     if(request == PTRACE_POKEUSER) {
-        if(ptrace(PTRACE_PEEKDATA, pid, &userdata_sign, NULL)==userdata_sign  && (uintptr_t)addr < sizeof(userdata)) {
+        if(ptrace(PTRACE_PEEKDATA, pid, &userdata_sign, NULL)==userdata_sign  && (uintptr_t)addr < sizeof(my_x64_user_t)) {
+        //printf_log_prefix(2, LOG_INFO, "Using ptrace POKE at %p for 0x%x (userdata 0x%x)\n", addr, pid, data);
             long ret = ptrace(PTRACE_POKEDATA, pid, addr+(uintptr_t)userdata, data);
             return ret;
         }
+        //printf_log_prefix(2, LOG_INFO, "Using ptrace POKE at %p for 0x%x (faked 0x%x)\n", addr, pid, data);
         // fallback to a generic local faking
         if((uintptr_t)addr < sizeof(userdata)) {
             *(uintptr_t*)(addr+(uintptr_t)userdata) = (uintptr_t)data;
@@ -3534,14 +3700,29 @@ EXPORT long my_ptrace(x64emu_t* emu, int request, pid_t pid, void* addr, uint32_
         return -1;
     }
     if(request == PTRACE_PEEKUSER) {
-        if(ptrace(PTRACE_PEEKDATA, pid, &userdata_sign, NULL)==userdata_sign  && (uintptr_t)addr < sizeof(userdata)) {
-            return ptrace(PTRACE_PEEKDATA, pid, addr+(uintptr_t)userdata, data);
+        if(ptrace(PTRACE_PEEKDATA, pid, &userdata_sign, NULL)==userdata_sign  && (uintptr_t)addr < sizeof(my_x64_user_t)) {
+            long ret = ptrace(PTRACE_PEEKDATA, pid, addr+(uintptr_t)userdata, data);
+            if((uintptr_t)addr==offsetof(my_x64_user_t, u_debugreg[6])) {
+                // clean up DR6...
+                ret |= 0b111111110000ULL;
+                ret &= 0xffffefffULL;
+                ret |= 0xffff0000ULL;
+            }
+            if((uintptr_t)addr==offsetof(my_x64_user_t, u_debugreg[7])) {
+                // clean up DR7...
+                ret |= 1ULL<<10;
+                ret &= (0xffff3fffLL);
+            }
+            //printf_log_prefix(2, LOG_INFO, "Using ptrace PEEK at %p for 0x%x (userdata) => 0x%x\n", addr, pid, ret);
+            return ret;
         }
         // fallback to a generic local faking
         if((uintptr_t)addr < sizeof(userdata)) {
             errno = 0;
+            //printf_log_prefix(2, LOG_INFO, "Using ptrace PEEK at %p for 0x%x (faked) => 0x%x\n", addr, pid, *(uintptr_t*)(addr+(uintptr_t)userdata));
             return *(uintptr_t*)(addr+(uintptr_t)userdata);
         }
+        //printf_log_prefix(2, LOG_INFO, "Using ptrace PEEK at %p for 0x%x (error) => -1)\n", addr, pid);
         errno = EINVAL;
         return -1;
     }
@@ -3760,7 +3941,6 @@ static int clone_fn(void* p)
     thread_set_emu(emu);
     if(arg->flags&CLONE_NEWUSER) {
         init_mutexes(my_context);
-        ResetSegmentsCache(emu);
     }
     int ret = RunFunctionWithEmu(emu, 0, arg->fnc, 1, arg->args);
     int exited = (emu->flags.quitonexit==2);
@@ -3840,6 +4020,11 @@ EXPORT int my_register_printf_type(x64emu_t* emu, void* f)
     return my->register_printf_type(findprintf_typeFct(f));
 }
 
+EXPORT __uint128_t my___udivti3(__uint128_t a, __uint128_t b)
+{
+    return a/b;
+}
+
 extern int box64_quit;
 extern int box64_exit_code;
 void endBox64();
@@ -3882,7 +4067,7 @@ EXPORT void my__exit(x64emu_t* emu, int code)
     if(emu->flags.quitonexit || emu->quit) {
         _exit(code);
     }
-    printf_log(LOG_INFO, "Fast _exit called\n");
+    dynarec_log(LOG_INFO, "Fast _exit called\n");
     emu->quit = 1;
     box64_exit_code = code;
     SerializeAllMapping();   // just to be safe
@@ -3909,6 +4094,204 @@ EXPORT int my_prctl(x64emu_t* emu, int option, unsigned long arg2, unsigned long
     return prctl(option, arg2, arg3, arg4, arg5);
 }
 
+EXPORT int my_pidfd_open(x64emu_t* emu, int pid, unsigned int flags)
+{
+    (void)emu;
+#if defined(SYS_pidfd_open)
+    return syscall(SYS_pidfd_open, pid, flags);
+#elif defined(__NR_pidfd_open)
+    return syscall(__NR_pidfd_open, pid, flags);
+#else
+    (void)pid;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+EXPORT int my_pidfd_send_signal(x64emu_t* emu, int pidfd, int sig, siginfo_t* info, unsigned int flags)
+{
+    (void)emu;
+    int hsig = signal_from_x64(sig);
+    siginfo_t hinfo;
+    siginfo_t* hptr = NULL;
+    if(info) {
+        memcpy(&hinfo, info, sizeof(hinfo));
+        hinfo.si_signo = hsig;
+        hptr = &hinfo;
+    }
+#if defined(SYS_pidfd_send_signal)
+    return syscall(SYS_pidfd_send_signal, pidfd, hsig, hptr, flags);
+#elif defined(__NR_pidfd_send_signal)
+    return syscall(__NR_pidfd_send_signal, pidfd, hsig, hptr, flags);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+EXPORT int my_pidfd_getfd(x64emu_t* emu, int pidfd, int targetfd, unsigned int flags)
+{
+    (void)emu;
+#if defined(SYS_pidfd_getfd)
+    return syscall(SYS_pidfd_getfd, pidfd, targetfd, flags);
+#elif defined(__NR_pidfd_getfd)
+    return syscall(__NR_pidfd_getfd, pidfd, targetfd, flags);
+#else
+    (void)pidfd;
+    (void)targetfd;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+
+EXPORT int my_fsopen(x64emu_t* emu, const char* fs_name, unsigned int flags)
+{
+    (void)emu;
+#if defined(SYS_fsopen)
+    return syscall(SYS_fsopen, fs_name, flags);
+#elif defined(__NR_fsopen)
+    return syscall(__NR_fsopen, fs_name, flags);
+#else
+    (void)fs_name;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+EXPORT int my_fsconfig(x64emu_t* emu, int fs_fd, unsigned int cmd, const char* key, const void* value, int aux)
+{
+    (void)emu;
+#if defined(SYS_fsconfig)
+    return syscall(SYS_fsconfig, fs_fd, cmd, key, value, aux);
+#elif defined(__NR_fsconfig)
+    return syscall(__NR_fsconfig, fs_fd, cmd, key, value, aux);
+#else
+    (void)fs_fd;
+    (void)cmd;
+    (void)key;
+    (void)value;
+    (void)aux;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+EXPORT int my_fsmount(x64emu_t* emu, int fs_fd, unsigned int flags, unsigned int attr_flags)
+{
+    (void)emu;
+#if defined(SYS_fsmount)
+    return syscall(SYS_fsmount, fs_fd, flags, attr_flags);
+#elif defined(__NR_fsmount)
+    return syscall(__NR_fsmount, fs_fd, flags, attr_flags);
+#else
+    (void)fs_fd;
+    (void)flags;
+    (void)attr_flags;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+EXPORT int my_fspick(x64emu_t* emu, int dfd, const char* path, unsigned int flags)
+{
+    (void)emu;
+#if defined(SYS_fspick)
+    return syscall(SYS_fspick, dfd, path, flags);
+#elif defined(__NR_fspick)
+    return syscall(__NR_fspick, dfd, path, flags);
+#else
+    (void)dfd;
+    (void)path;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+EXPORT int my_move_mount(x64emu_t* emu, int from_dfd, const char* from_path, int to_dfd, const char* to_path, unsigned int flags)
+{
+    (void)emu;
+#if defined(SYS_move_mount)
+    return syscall(SYS_move_mount, from_dfd, from_path, to_dfd, to_path, flags);
+#elif defined(__NR_move_mount)
+    return syscall(__NR_move_mount, from_dfd, from_path, to_dfd, to_path, flags);
+#else
+    (void)from_dfd;
+    (void)from_path;
+    (void)to_dfd;
+    (void)to_path;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+EXPORT int my_mount_setattr(x64emu_t* emu, int dfd, const char* path, unsigned int flags, void* attr, size_t size)
+{
+    (void)emu;
+#if defined(SYS_mount_setattr)
+    return syscall(SYS_mount_setattr, dfd, path, flags, attr, size);
+#elif defined(__NR_mount_setattr)
+    return syscall(__NR_mount_setattr, dfd, path, flags, attr, size);
+#else
+    (void)dfd;
+    (void)path;
+    (void)flags;
+    (void)attr;
+    (void)size;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+size_t __attribute__((weak)) strlcpy(char* dest, const char* src, size_t len)
+{
+    size_t l = strlen(src);
+    if(len) {
+        strncpy(dest, src, len-1);
+        dest[len]=0;
+    }
+    return l;
+}
+size_t __attribute__((weak)) __strlcpy_chk(char* dest, const char* src, size_t len, size_t chk)
+{
+    // in case it's not defined... create a weak version with no actual chk
+    return strlcpy(dest, src, len);
+}
+
+__attribute__((weak)) uint32_t arc4random(void)
+{
+    return get_random32();
+}
+
+__attribute__((weak)) const char* strerrorname_np(int errnum)
+{
+    (void)errnum;
+    return NULL;
+}
+
+__attribute__((weak)) int open_tree(int dfd, const char* path, unsigned int flags)
+{
+#ifdef SYS_open_tree
+    return syscall(SYS_open_tree, dfd, path, flags);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+__attribute__((weak)) int dn_skipname(const unsigned char* ptr, const unsigned char* eom)
+{
+    (void)ptr;
+    (void)eom;
+    errno = ENOSYS;
+    return -1;
+}
+
 #ifndef _SC_NPROCESSORS_ONLN
 #define _SC_NPROCESSORS_ONLN    84
 #endif
@@ -3917,10 +4300,10 @@ EXPORT int my_prctl(x64emu_t* emu, int option, unsigned long arg2, unsigned long
 #endif
 EXPORT long my_sysconf(x64emu_t* emu, int what) {
     if(what==_SC_NPROCESSORS_ONLN) {
-        return getNCpu();
+        return box64_sysinfo.box64_ncpu;
     }
     if(what==_SC_NPROCESSORS_CONF) {
-        return getNCpu();
+        return box64_sysinfo.box64_ncpu;
     }
     return sysconf(what);
 }
@@ -3942,11 +4325,6 @@ EXPORT char* secure_getenv(const char* name)
 }
 
 #ifdef STATICBUILD
-uint32_t get_random32();
-__attribute__((weak)) uint32_t arc4random()
-{
-    return get_random32();
-}
 #include "libtools/static_libc.h"
 #endif
 

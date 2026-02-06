@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <inttypes.h>
+#include <strings.h>
 #if defined(DYNAREC) && !defined(WIN32)
 #include <sys/types.h>
 #include <dirent.h>
@@ -25,7 +26,7 @@ box64env_t box64env = { 0 };
 
 KHASH_MAP_INIT_STR(box64env_entry, box64env_t)
 static kh_box64env_entry_t* box64env_entries = NULL;
-static kh_box64env_entry_t* box64env_entries_gen = NULL;
+static kh_box64env_entry_t* box64env_entries_wildcard = NULL;
 
 mmaplist_t* NewMmaplist();
 void DelMmaplist(mmaplist_t* list);
@@ -86,11 +87,8 @@ static const char default_rcfile[] =
 "[streaming_client]\n"
 "BOX64_EMULATED_LIBS=libSDL2-2.0.so.0:libSDL2_ttf-2.0.so.0\n"
 "\n"
-"[steam-runtime-check-requirements]\n"
-"BOX64_EXIT=1\n"
-"\n"
 "[steam-runtime-launcher-service]\n"
-"BOX64_EXIT=1\n"
+"BOX64_NOGTK=1\n"
 ;
 
 #ifdef _WIN32
@@ -144,7 +142,8 @@ static void parseRange(const char* s, uintptr_t* start, uintptr_t* end)
 }
 
 void AddNewLibs(const char* list);
-int canNCpuBeChanged();
+
+extern int box64_cycle_log_initialized;
 
 static void applyCustomRules()
 {
@@ -154,8 +153,7 @@ static void applyCustomRules()
     }
 
 #ifndef _WIN32
-    if(box64env.is_cycle_log_overridden) {
-        freeCycleLog(my_context);
+    if (box64env.is_cycle_log_overridden) {
         box64env.rolling_log = BOX64ENV(cycle_log);
 
         if (BOX64ENV(rolling_log) == 1) {
@@ -164,7 +162,7 @@ static void applyCustomRules()
         if (BOX64ENV(rolling_log) && BOX64ENV(log) > LOG_INFO) {
             box64env.rolling_log = 0;
         }
-        initCycleLog(my_context);
+        if (!box64_cycle_log_initialized) initCycleLog(my_context);
     }
 
     if (box64env.is_dynarec_gdbjit_str_overridden) {
@@ -220,9 +218,43 @@ static void applyCustomRules()
 #endif
     }
 
+    if (box64env.is_profile_overridden) {
+        if (!strcasecmp(box64env.profile, "safest")) {
+            SET_BOX64ENV_IF_EMPTY(dynarec_fastnan, 0);
+            SET_BOX64ENV_IF_EMPTY(dynarec_fastround, 0);
+            SET_BOX64ENV_IF_EMPTY(dynarec_bigblock, 0);
+            SET_BOX64ENV_IF_EMPTY(dynarec_safeflags, 2);
+            SET_BOX64ENV_IF_EMPTY(dynarec_strongmem, 2);
+        } else if (!strcasecmp(box64env.profile, "safe")) {
+            SET_BOX64ENV_IF_EMPTY(dynarec_bigblock, 0);
+            SET_BOX64ENV_IF_EMPTY(dynarec_safeflags, 2);
+            SET_BOX64ENV_IF_EMPTY(dynarec_strongmem, 1);
+        } else if (!strcasecmp(box64env.profile, "default")) {
+        } else if (!strcasecmp(box64env.profile, "fast")) {
+            SET_BOX64ENV_IF_EMPTY(dynarec_callret, 1);
+            SET_BOX64ENV_IF_EMPTY(dynarec_bigblock, 3);
+            SET_BOX64ENV_IF_EMPTY(dynarec_safeflags, 0);
+            SET_BOX64ENV_IF_EMPTY(dynarec_strongmem, 1);
+            SET_BOX64ENV_IF_EMPTY(dynarec_dirty, 1);
+            SET_BOX64ENV_IF_EMPTY(dynarec_forward, 1024);
+        } else if (!strcasecmp(box64env.profile, "fastest")) {
+            SET_BOX64ENV_IF_EMPTY(dynarec_callret, 1);
+            SET_BOX64ENV_IF_EMPTY(dynarec_bigblock, 3);
+            SET_BOX64ENV_IF_EMPTY(dynarec_safeflags, 0);
+            SET_BOX64ENV_IF_EMPTY(dynarec_strongmem, 0);
+            SET_BOX64ENV_IF_EMPTY(dynarec_dirty, 1);
+            SET_BOX64ENV_IF_EMPTY(dynarec_forward, 1024);
+        } else {
+            static int warned = 0;
+            if (!warned) {
+                printf_log(LOG_INFO, "Warning, unknown choice for BOX64_PROFILE: %s, choices are: safest,safe,default,fast,fastest.\n", box64env.profile);
+                warned = 1;
+            }
+        }
+    }
+
     if (box64env.maxcpu == 0 || (box64env.new_maxcpu < box64env.maxcpu)) {
-        if(canNCpuBeChanged())
-            box64env.maxcpu = box64env.new_maxcpu;
+        box64env.maxcpu = box64env.new_maxcpu;
     }
 
 #ifndef _WIN32
@@ -288,19 +320,55 @@ static void freeEnv(box64env_t* env)
 #undef STRING
 }
 
-static void pushNewEntry(const char* name, box64env_t* env, int gen)
+#ifdef ARM64
+#define ENV_ARCH "arm64"
+#elif defined(RV64)
+#define ENV_ARCH "rv64"
+#elif defined(LA64)
+#define ENV_ARCH "la64"
+#elif defined(X86_64)
+#define ENV_ARCH "x86_64"
+#else
+#warning "Unknown architecture for ENV_ARCH"
+#define ENV_ARCH "unknown"
+#endif
+
+static void pushNewEntry(const char* name, box64env_t* env, int wildcard)
 {
+    if (env->is_arch_overridden && *env->arch == '\0') env->is_arch_overridden = 0;
+
+    // Arch specific but not match, ignore
+    if (env->is_arch_overridden && strcasecmp(env->arch, ENV_ARCH)) {
+        freeEnv(env);
+        return;
+    }
     khint_t k;
-    kh_box64env_entry_t* khp = gen ? box64env_entries_gen : box64env_entries;
+    kh_box64env_entry_t* khp = wildcard ? box64env_entries_wildcard : box64env_entries;
     k = kh_get(box64env_entry, khp, name);
+    // No entry exist, add a new one
     if (k == kh_end(khp)) {
         int ret;
         k = kh_put(box64env_entry, khp, box_strdup(name), &ret);
-    } else {
-        freeEnv(&kh_value(khp, k));
+        box64env_t* p = &kh_value(khp, k);
+        memcpy(p, env, sizeof(box64env_t));
+        return;
     }
+
+    // Entry exists, replace it if the new one is arch specific or has higher priority
+    if (env->is_arch_overridden && !strcasecmp(env->arch, ENV_ARCH) || env->priority > kh_value(khp, k).priority) {
+        freeEnv(&kh_value(khp, k));
+        box64env_t* p = &kh_value(khp, k);
+        memcpy(p, env, sizeof(box64env_t));
+        return;
+    }
+
+    // Entry exists, the new one is generic, replace it only if existing one is also generic
     box64env_t* p = &kh_value(khp, k);
-    memcpy(p, env, sizeof(box64env_t));
+    if (!p->is_arch_overridden) {
+        freeEnv(p);
+        box64env_t* p = &kh_value(khp, k);
+        memcpy(p, env, sizeof(box64env_t));
+    }
 }
 
 #ifdef ANDROID
@@ -312,7 +380,7 @@ static int shm_unlink(const char *name) {
 }
 #endif
 
-static void initializeEnvFile(const char* filename)
+static void initializeEnvFile(const char* filename, int priority)
 {
     if (box64env.noenvfiles) return;
 
@@ -336,10 +404,11 @@ static void initializeEnvFile(const char* filename)
 
     if (!box64env_entries)
         box64env_entries = kh_init(box64env_entry);
-    if (!box64env_entries_gen)
-        box64env_entries_gen = kh_init(box64env_entry);
+    if (!box64env_entries_wildcard)
+        box64env_entries_wildcard = kh_init(box64env_entry);
 
     box64env_t current_env = { 0 };
+    current_env.priority = priority;
     size_t linesize = 0, len = 0;
     char* current_name = NULL;
     bool is_wildcard_name = false;
@@ -449,20 +518,21 @@ static void initializeEnvFile(const char* filename)
 
 void InitializeEnvFiles()
 {
+    int priority = 0;
 #ifndef _WIN32 // FIXME: this needs some consideration on Windows, so for now, only do it on Linux
     if (BOX64ENV(envfile) && FileExist(BOX64ENV(envfile), IS_FILE))
-        initializeEnvFile(BOX64ENV(envfile));
+        initializeEnvFile(BOX64ENV(envfile), priority++);
 #ifndef TERMUX
     else if (FileExist("/etc/box64.box64rc", IS_FILE))
-        initializeEnvFile("/etc/box64.box64rc");
+        initializeEnvFile("/etc/box64.box64rc", priority++);
     else if (FileExist("/data/data/com.termux/files/usr/glibc/etc/box64.box64rc", IS_FILE))
-        initializeEnvFile("/data/data/com.termux/files/usr/glibc/etc/box64.box64rc");
+        initializeEnvFile("/data/data/com.termux/files/usr/glibc/etc/box64.box64rc", priority++);
 #else
     else if (FileExist("/data/data/com.termux/files/usr/etc/box64.box64rc", IS_FILE))
-        initializeEnvFile("/data/data/com.termux/files/usr/etc/box64.box64rc");
+        initializeEnvFile("/data/data/com.termux/files/usr/etc/box64.box64rc", priority++);
 #endif
     else
-        initializeEnvFile(NULL); // load default rcfile
+        initializeEnvFile(NULL, priority++); // load default rcfile
 #endif
 
     char* p = GetEnv(HOME);
@@ -471,7 +541,7 @@ void InitializeEnvFiles()
         strncpy(tmp, p, 4095);
         strncat(tmp, PATHSEP ".box64rc", 4095);
         if (FileExist(tmp, IS_FILE)) {
-            initializeEnvFile(tmp);
+            initializeEnvFile(tmp, priority++);
         }
     }
 }
@@ -517,11 +587,12 @@ static void internalApplyEnvFileEntry(const char* entryname, const box64env_t* e
 }
 
 static char old_entryname[256] = "";
-void ApplyEnvFileEntry(const char* entryname)
+int ApplyEnvFileEntry(const char* entryname)
 {
-    if (!entryname || !box64env_entries) return;
-    if (!strcasecmp(entryname, old_entryname)) return;
+    if (!entryname || !box64env_entries) return 0;
+    if (!strcasecmp(entryname, old_entryname)) return 0;
 
+    int ret = 0;
     strncpy(old_entryname, entryname, 255);
     khint_t k1;
     {
@@ -529,18 +600,23 @@ void ApplyEnvFileEntry(const char* entryname)
         k1 = kh_get(box64env_entry, box64env_entries, lowercase_entryname);
         box64env_t* env;
         const char* k2;
-        kh_foreach_ref(box64env_entries_gen, k2, env,
-            if (strstr(lowercase_entryname, k2))
+        // clang-format off
+        kh_foreach_ref(box64env_entries_wildcard, k2, env,
+            if (strstr(lowercase_entryname, k2)) {
                 internalApplyEnvFileEntry(entryname, env);
-            applyCustomRules();
+                applyCustomRules();
+                ret = 1;
+            }
         )
         box_free(lowercase_entryname);
+        // clang-format on
     }
-    if (k1 == kh_end(box64env_entries)) return;
+    if (k1 == kh_end(box64env_entries)) return ret;
 
     box64env_t* env = &kh_value(box64env_entries, k1);
     internalApplyEnvFileEntry(entryname, env);
     applyCustomRules();
+    return 1;
 }
 
 void LoadEnvVariables()
@@ -612,12 +688,12 @@ void LoadEnvVariables()
         box64env.is_##name##_overridden = 1;               \
         box64env.is_any_overridden = 1;                    \
     }
-#define STRING(NAME, name, wine)             \
-    p = GETENV(#NAME, wine);                 \
-    if (p) {                                 \
-        box64env.name = strdup(p);           \
-        box64env.is_##name##_overridden = 1; \
-        box64env.is_any_overridden = 1;      \
+#define STRING(NAME, name, wine)                \
+    p = GETENV(#NAME, wine);                    \
+    if (p && strcasecmp(#NAME, "BOX64_ARCH")) { \
+        box64env.name = strdup(p);              \
+        box64env.is_##name##_overridden = 1;    \
+        box64env.is_any_overridden = 1;         \
     }
     ENVSUPER()
 #undef INTEGER
@@ -804,15 +880,15 @@ done:
 #define HEADER_SIGN "DynaCache"
 #define SET_VERSION(MAJ, MIN, REV) (((MAJ)<<24)|((MIN)<<16)|(REV))
 #ifdef ARM64
-#define ARCH_VERSION SET_VERSION(0, 0, 6)
+#define ARCH_VERSION SET_VERSION(0, 0, 12)
 #elif defined(RV64)
-#define ARCH_VERSION SET_VERSION(0, 0, 3)
+#define ARCH_VERSION SET_VERSION(0, 0, 4)
 #elif defined(LA64)
-#define ARCH_VERSION SET_VERSION(0, 0, 3)
+#define ARCH_VERSION SET_VERSION(0, 0, 5)
 #else
 #error meh!
 #endif
-#define DYNAREC_VERSION SET_VERSION(0, 0, 5)
+#define DYNAREC_VERSION SET_VERSION(0, 1, 1)
 
 typedef struct DynaCacheHeader_s {
     char sign[10];  //"DynaCache\0"
@@ -849,6 +925,9 @@ typedef struct DynaCacheHeader_s {
     DS_GO(BOX64_DYNAREC_VOLATILE_METADATA, dynarec_volatile_metadata, 1)\
     DS_GO(BOX64_DYNAREC_WEAKBARRIER, dynarec_weakbarrier, 2)            \
     DS_GO(BOX64_DYNAREC_X87DOUBLE, dynarec_x87double, 2)                \
+    DS_GO(BOX64_DYNAREC_NOARCH, dynarec_noarch, 2)                      \
+    DS_GO(BOX64_aes, aes, 1)                                            \
+    DS_GO(BOX64_PCLMULQDQ, pclmulqdq, 1)                                \
     DS_GO(BOX64_SHAEXT, shaext, 1)                                      \
     DS_GO(BOX64_SSE42, sse42, 1)                                        \
     DS_GO(BOX64_AVX, avx, 2)                                            \
@@ -924,6 +1003,11 @@ void SerializeMmaplist(mapping_t* mapping)
     if(mapping->env && mapping->env->is_dynacache_overridden && (mapping->env->dynacache!=1))
         return;
     if((!mapping->env || !mapping->env->is_dynacache_overridden) && box64env.dynacache!=1)
+        return;
+    // don't do serialize for program that needs purge=1
+    if(mapping->env && mapping->env->is_dynarec_purge_overridden && mapping->env->dynarec_purge)
+        return;
+    if((!mapping->env || !mapping->env->is_dynarec_purge_overridden) && box64env.dynarec_purge)
         return;
     // don't do serialize for program that needs dirty=1
     if(mapping->env && mapping->env->is_dynarec_dirty_overridden && mapping->env->dynarec_dirty)
@@ -1077,11 +1161,6 @@ int ReadDynaCache(const char* folder, const char* name, mapping_t* mapping, int 
         fclose(f);
         return DCERR_DYNARCHVER;
     }
-    if(header.arch_version!=ARCH_VERSION) {
-        if(verbose) printf_log_prefix(0, LOG_NONE, "Incompatible Dynarec Arch Version\n");
-        fclose(f);
-        return DCERR_DYNVER;
-    }
     if(header.pagesize!=box64_pagesize) {
         if(verbose) printf_log_prefix(0, LOG_NONE, "Bad pagesize\n");
         fclose(f);
@@ -1185,7 +1264,7 @@ int ReadDynaCache(const char* folder, const char* name, mapping_t* mapping, int 
         for(size_t i=0; i<header.nLockAddresses; ++i)
             addLockAddress(lockAddresses[i]+delta_map);
         for(size_t i=0; i<header.nUnalignedAddresses; ++i)
-            add_unaligned_address(lockAddresses[i]+delta_map);
+            add_unaligned_address(unalignedAddresses[i]+delta_map);
         dynarec_log(LOG_INFO, "Loaded DynaCache for %s, with %d blocks\n", mapping->fullname, header.nblocks);
     }
     fclose(f);

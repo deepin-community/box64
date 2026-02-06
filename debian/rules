@@ -13,11 +13,13 @@ include /usr/share/dpkg/pkg-info.mk
 ifeq ($(DEB_HOST_ARCH),amd64)
 PLATFORMS=NOALIGN
 else ifeq ($(DEB_HOST_ARCH),arm64)
-PLATFORMS=ARM_DYNAREC RPI4ARM64 RK3588
+PLATFORMS=ARM_DYNAREC RPI3ARM64 RPI4ARM64 RPI5ARM64 RK3588 RK3399
 else ifeq ($(DEB_HOST_ARCH),ppc64el)
 PLATFORMS=PPC64LE
 else ifeq ($(DEB_HOST_ARCH),riscv64)
 PLATFORMS=RV64
+else ifeq ($(DEB_HOST_ARCH),loong64)
+PLATFORMS=LARCH64
 endif
 
 override_dh_auto_configure:

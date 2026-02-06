@@ -22,6 +22,7 @@
 #include "debug.h"
 #include "x64tls.h"
 #include "librarian.h"
+#include "emu/x64emu_private.h"
 
 int GetTID(void)
 {
@@ -58,6 +59,11 @@ void EmuX64Syscall(void* emu)
     x64Syscall((x64emu_t*)emu);
 }
 
+void EmuX64Syscall_linux(void* emu)
+{
+    x64Syscall_linux((x64emu_t*)emu);
+}
+
 void EmuX86Syscall(void* emu)
 {
     x86Syscall((x64emu_t*)emu);
@@ -65,33 +71,33 @@ void EmuX86Syscall(void* emu)
 
 extern int box64_is32bits;
 
-void* GetSeg43Base()
+void* GetSeg43Base(void* emu)
 {
-    tlsdatasize_t* ptr = getTLSData(my_context);
-    return ptr->data;
+    tlsdatasize_t* ptr = ((x64emu_t*)emu)->tlsdata;
+    return ptr?ptr->data:NULL;
 }
 
-void* GetSegmentBase(uint32_t desc)
+void* GetSegmentBase(void* emu, uint32_t desc)
 {
     if (!desc) {
         printf_log(LOG_NONE, "Warning, accessing segment NULL\n");
         return NULL;
     }
     int base = desc >> 3;
-    if (!box64_is32bits && base == 0x8 && !my_context->segtls[base].key_init)
-        return GetSeg43Base();
-    if (box64_is32bits && (base == 0x6))
-        return GetSeg43Base();
+    int is_ldt = !!(desc&4);
+    base_segment_t* segs = is_ldt?((x64emu_t*)emu)->segldt:((base>5)?((x64emu_t*)emu)->seggdt:my_context->seggdt);
+    if(!box64_nolibs) {
+        if (!box64_is32bits && (base == 0x8) )
+            return GetSeg43Base((x64emu_t*)emu);
+        if (box64_is32bits && (base == 0x6))
+            return GetSeg43Base((x64emu_t*)emu);
+        }
     if (base > 15) {
         printf_log(LOG_NONE, "Warning, accessing segment unknown 0x%x or unset\n", desc);
         return NULL;
     }
-    if (my_context->segtls[base].key_init) {
-        void* ptr = pthread_getspecific(my_context->segtls[base].key);
-        return ptr;
-    }
 
-    void* ptr = (void*)my_context->segtls[base].base;
+    void* ptr = (void*)segs[base].base;
     return ptr;
 }
 
@@ -188,12 +194,14 @@ int InternalMunmap(void* addr, unsigned long length)
 
 extern FILE* ftrace;
 extern char* ftrace_name;
+static int trace_fd = -1;
 
 static void checkFtrace()
 {
-    int fd = fileno(ftrace);
-    if (fd < 0 || lseek(fd, 0, SEEK_CUR) == (off_t)-1) {
+    trace_fd = fileno(ftrace);
+    if (trace_fd < 0 || lseek(trace_fd, 0, SEEK_CUR) == (off_t)-1) {
         ftrace = fopen(ftrace_name, "a");
+        trace_fd = fileno(ftrace);
         printf_log(LOG_INFO, "%04d|Recreated trace because fd was invalid\n", GetTID());
     }
 }
@@ -202,22 +210,28 @@ void PrintfFtrace(int prefix, const char* fmt, ...)
 {
     if (ftrace_name) {
         checkFtrace();
-    }
+    } else if(trace_fd==-1)
+        trace_fd = fileno(ftrace);
+    // using a combinaison of (v)sprintf an write as it's re-entrant, not like (v)fprintf
 
     static const char* names[2] = { "BOX64", "BOX32" };
 
-    if (prefix && ftrace == stdout) {
+    char tmp[8192];
+
+    if (prefix && (ftrace == stdout || ftrace == stderr)) {
         if (prefix > 1) {
-            fprintf(ftrace, "[\033[31m%s\033[0m] ", names[box64_is32bits]);
+            sprintf(tmp, "[\033[31m%s\033[0m] ", names[box64_is32bits]);
         } else {
-            fprintf(ftrace, "[%s] ", names[box64_is32bits]);
+            sprintf(tmp, "[%s] ", names[box64_is32bits]);
         }
+        write(trace_fd, tmp, strlen(tmp));
     }
     va_list args;
     va_start(args, fmt);
-    vfprintf(ftrace, fmt, args);
+    vsprintf(tmp, fmt, args);
     fflush(ftrace);
     va_end(args);
+    write(trace_fd, tmp, strlen(tmp));
 }
 
 void* GetEnv(const char* name)
