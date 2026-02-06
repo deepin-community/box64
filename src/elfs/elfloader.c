@@ -10,6 +10,7 @@
 #include <link.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fnmatch.h>
 #ifndef _DLFCN_H
 #include <dlfcn.h>
 #endif
@@ -37,6 +38,8 @@
 #include "dictionnary.h"
 #include "symbols.h"
 #include "cleanup.h"
+#include "globalsymbols.h"
+#include "elfhacks.h"
 #ifdef DYNAREC
 #include "dynablock.h"
 #endif
@@ -265,9 +268,9 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
     if(image==MAP_FAILED || image!=(void*)(head->vaddr?head->vaddr:offs)) {
         printf_log(LOG_NONE, "%s cannot create memory map (@%p 0x%zx) for elf \"%s\"", (image==MAP_FAILED)?"Error:":"Warning:", (void*)(head->vaddr?head->vaddr:offs), head->memsz, head->name);
         if(image==MAP_FAILED) {
-            printf_log(LOG_NONE, " error=%d/%s\n", errno, strerror(errno));
+            printf_log_prefix(0, LOG_NONE, " error=%d/%s\n", errno, strerror(errno));
         } else {
-            printf_log(LOG_NONE, " got %p\n", image);
+            printf_log_prefix(0, LOG_NONE, " got %p\n", image);
         }
         if(image==MAP_FAILED)
             return 1;
@@ -296,7 +299,8 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
             head->multiblocks[n].paddr = e->p_paddr + offs;
             head->multiblocks[n].size = e->p_filesz;
             head->multiblocks[n].align = e->p_align;
-            uint8_t prot = ((e->p_flags & PF_R)?PROT_READ:0)|((e->p_flags & PF_W)?PROT_WRITE:0)|((e->p_flags & PF_X)?PROT_EXEC:0);
+            // HACK: Mark all the code pages writable in unittest mode because some tests mix code and (writable) data...
+            uint8_t prot = ((e->p_flags & PF_R)?PROT_READ:0)|(((e->p_flags & PF_W) || box64_unittest_mode)?PROT_WRITE:0)|((e->p_flags & PF_X)?PROT_EXEC:0);
             // check if alignment is correct
             uintptr_t balign = head->multiblocks[n].align-1;
             if (balign < (box64_pagesize - 1)) balign = box64_pagesize - 1;
@@ -313,7 +317,7 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
             if(e->p_align<box64_pagesize)
                 try_mmap = 0;
             if(try_mmap) {
-                printf_dump(log_level, "Mmaping 0x%lx(0x%lx) bytes @%p for Elf \"%s\"\n", head->multiblocks[n].size, head->multiblocks[n].asize, (void*)head->multiblocks[n].paddr, head->name);
+                printf_dump(log_level, "Mmaping 0x%lx(0x%lx) bytes @%p with prot %x for Elf \"%s\"\n", head->multiblocks[n].size, head->multiblocks[n].asize, (void*)head->multiblocks[n].paddr, prot, head->name);
                 void* p = InternalMmap(
                     (void*)head->multiblocks[n].paddr,
                     head->multiblocks[n].size,
@@ -430,6 +434,8 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
     fclose(head->file);
     head->file = NULL;
     head->fileno = -1;
+
+    PatchLoadedDynamicSection(head);
 
     return 0;
 }
@@ -642,12 +648,13 @@ static int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int 
         uint64_t* globp;
         uintptr_t tmp = 0;
         intptr_t delta;
+        int global;
         switch(t) {
             case R_X86_64_NONE:
                 break;
             case R_X86_64_PC32:
                 // should be "S + A - P" with S=symbol offset, A=addend and P=place of the storage unit, write a word32
-                // can be ignored
+                // can be ignored (so *p = offs + addend - p)
                 break;
             case R_X86_64_RELATIVE:
                 printf_dump(LOG_NEVER, "Apply %s R_X86_64_RELATIVE @%p (%p -> %p)\n", BindSym(bind), p, *(void**)p, (void*)(head->delta+ rela[i].r_addend));
@@ -684,13 +691,17 @@ static int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int 
                 }
                 break;
             case R_X86_64_GLOB_DAT:
-                if(GetSymbolStartEnd(my_context->globdata, symname, &globoffs, &globend, version, vername, 1, veropt)) {
+                if((global = GetSymbolStartEnd(my_context->globdata, symname, &globoffs, &globend, version, vername, 1, veropt))) {
                     globp = (uint64_t*)globoffs;
                     printf_dump(LOG_NEVER, "Apply %s R_X86_64_GLOB_DAT with R_X86_64_COPY @%p/%p (%p/%p -> %p/%p) size=%zd on sym=%s (%sver=%d/%s) \n",
                         BindSym(bind), p, globp, (void*)(p?(*p):0),
                         (void*)(globp?(*globp):0), (void*)offs, (void*)globoffs, sym->st_size, symname, veropt?"opt":"", version, vername?vername:"(none)");
                     sym_elf = my_context->elfs[0];
                     *p = globoffs;
+                #ifndef STATICBUILD
+                    if(global==2)
+                        addGlobalRef(p, symname);
+                #endif
                 } else {
                     if (!offs) {
                         if(strcmp(symname, "__gmon_start__") && strcmp(symname, "data_start") && strcmp(symname, "__data_start") && strcmp(symname, "collector_func_load"))
@@ -717,7 +728,7 @@ static int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int 
                         if(bind==STB_WEAK) {
                             printf_log(LOG_INFO, "Warning: Weak Symbol %s not found, cannot apply R_X86_64_JUMP_SLOT @%p (%p)\n", symname, p, *(void**)p);
                         } else {
-                            printf_log(LOG_NONE, "Error: Symbol %s not found, cannot apply R_X86_64_JUMP_SLOT @%p (%p) in %s\n", symname, p, *(void**)p, head->name);
+                            printf_log(LOG_NONE, "Error: Symbol %s not found, cannot apply R_X86_64_JUMP_SLOT @%p (%p) in %s (%sver=%d / %s)\n", symname, p, *(void**)p, head->name, veropt?"opt":"", version, vername?vername:"(none)");
                             ret_ok = 1;
                         }
                         // return -1;
@@ -1115,6 +1126,11 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, int local, int bindnow, int de
     return 0;
 }
 
+needed_libs_t* GetELfNeededLibs(elfheader_t* h)
+{
+    return h?h->needed:NULL;
+}
+
 int ElfCheckIfUseTCMallocMinimal(elfheader_t* h)
 {
     if(!h)
@@ -1132,14 +1148,15 @@ int ElfCheckIfUseTCMallocMinimal(elfheader_t* h)
     return 0;
 }
 
-void RefreshElfTLS(elfheader_t* h)
+void RefreshElfTLS(elfheader_t* h, x64emu_t* emu)
 {
+    refreshTLSData(emu);
     if(h->tlsfilesize) {
         char* dest = (char*)(my_context->tlsdata+my_context->tlssize+h->tlsbase);
         printf_dump(LOG_DEBUG, "Refreshing main TLS block @%p from %p:0x%lx\n", dest, (void*)h->tlsaddr, h->tlsfilesize);
         memcpy(dest, (void*)(h->tlsaddr+h->delta), h->tlsfilesize);
-        if (pthread_getspecific(my_context->tlskey)) {
-            tlsdatasize_t* ptr = getTLSData(my_context);
+        if (emu->tlsdata) {
+            tlsdatasize_t* ptr = emu->tlsdata;
             // refresh in tlsdata too
             dest = (char*)(ptr->data+h->tlsbase);
             printf_dump(LOG_DEBUG, "Refreshing active TLS block @%p from %p:0x%lx\n", dest, (void*)h->tlsaddr, h->tlssize-h->tlsfilesize);
@@ -1162,10 +1179,9 @@ void RunElfInit(elfheader_t* h, x64emu_t *emu)
     if(!h || h->init_done)
         return;
     // reset Segs Cache
-    memset(emu->segs_serial, 0, sizeof(emu->segs_serial));
     uintptr_t p = h->initentry + h->delta;
     // Refresh no-file part of TLS in case default value changed
-    RefreshElfTLS(h);
+    RefreshElfTLS(h, emu);
     // check if in deferredInit
     if(my_context->deferredInit) {
         if(my_context->deferredInitSz==my_context->deferredInitCap) {
@@ -1437,9 +1453,9 @@ int SameVersionedSymbol(const char* name1, int ver1, const char* vername1, int v
     return 0;
 }
 
-void* GetDTatOffset(box64context_t* context, unsigned long int index, unsigned long int offset)
+void* GetDTatOffset(x64emu_t* emu, unsigned long int index, unsigned long int offset)
 {
-    return (void*)((char*)GetTLSPointer(context, context->elfs[index])+offset);
+    return (void*)((char*)GetTLSPointer(emu, emu->context->elfs[index])+offset);
 }
 
 int32_t GetTLSBase(elfheader_t* h)
@@ -1452,11 +1468,12 @@ uint32_t GetTLSSize(elfheader_t* h)
     return h?h->tlssize:0;
 }
 
-void* GetTLSPointer(box64context_t* context, elfheader_t* h)
+void* GetTLSPointer(x64emu_t* emu, elfheader_t* h)
 {
     if(!h || !h->tlssize)
         return NULL;
-    tlsdatasize_t* ptr = getTLSData(context);
+    refreshTLSData(emu);    // needed?
+    tlsdatasize_t* ptr = emu->tlsdata;
     return ptr->data+h->tlsbase;
 }
 
@@ -1465,6 +1482,141 @@ void* GetDynamicSection(elfheader_t* h)
     if(!h)
         return NULL;
     return box64_is32bits?((void*)h->Dynamic._32):((void*)h->Dynamic._64);
+}
+
+typedef struct {
+    void*   addr;
+    size_t  size;
+} dynamic_info_t;
+
+static int GetLoadedDynamicInfo(elfheader_t* h, dynamic_info_t* info)
+{
+    if(!h) return 0;
+    if(box64_is32bits) {
+        for(int i = 0; i < h->numPHEntries; i++) {
+            if(h->PHEntries._32[i].p_type == PT_DYNAMIC) {
+                info->addr = (void*)(h->delta + h->PHEntries._32[i].p_vaddr);
+                info->size = h->PHEntries._32[i].p_memsz;
+                return 1;
+            }
+        }
+    } else {
+        for(int i = 0; i < h->numPHEntries; i++) {
+            if(h->PHEntries._64[i].p_type == PT_DYNAMIC) {
+                info->addr = (void*)(h->delta + h->PHEntries._64[i].p_vaddr);
+                info->size = h->PHEntries._64[i].p_memsz;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+void* GetLoadedDynamicSection(elfheader_t* h)
+{
+    dynamic_info_t info;
+    if(GetLoadedDynamicInfo(h, &info))
+        return info.addr;
+    return NULL;
+}
+
+static int isDynamicTagPointer(int tag)
+{
+    switch(tag) {
+        case DT_PLTGOT:
+        case DT_HASH:
+        case DT_STRTAB:
+        case DT_SYMTAB:
+        case DT_RELA:
+        case DT_REL:
+        case DT_RELR:
+        case DT_DEBUG:
+        case DT_JMPREL:
+        case DT_INIT:
+        case DT_FINI:
+        case DT_INIT_ARRAY:
+        case DT_FINI_ARRAY:
+        case DT_PREINIT_ARRAY:
+        case DT_VERNEED:
+        case DT_VERDEF:
+        case DT_VERSYM:
+#ifdef DT_GNU_HASH
+        case DT_GNU_HASH:
+#else
+        case 0x6ffffef5:
+#endif
+#ifdef DT_TLSDESC_PLT
+        case DT_TLSDESC_PLT:
+#else
+        case 0x6ffffef6:
+#endif
+#ifdef DT_TLSDESC_GOT
+        case DT_TLSDESC_GOT:
+#else
+        case 0x6ffffef7:
+#endif
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+void PatchLoadedDynamicSection(elfheader_t* h)
+{
+    if(!h || !h->delta || h->dynamic_patched)
+        return;
+
+    dynamic_info_t dyninfo;
+    if(!GetLoadedDynamicInfo(h, &dyninfo))
+        return;
+
+    uintptr_t dyn_addr = (uintptr_t)dyninfo.addr;
+    uintptr_t dyn_size = dyninfo.size;
+
+    uintptr_t page_addr = dyn_addr & ~(box64_pagesize - 1);
+    uintptr_t page_end = (dyn_addr + dyn_size + box64_pagesize - 1) & ~(box64_pagesize - 1);
+
+    int need_restore = 0;
+    for(uintptr_t page = page_addr; page < page_end; page += box64_pagesize) {
+        uint32_t old_prot = getProtection(page);
+        if(old_prot && !(old_prot & PROT_WRITE)) {
+            if(mprotect((void*)page, box64_pagesize, (old_prot | PROT_WRITE) & ~PROT_CUSTOM)) {
+                for(uintptr_t restore = page_addr; restore < page; restore += box64_pagesize) {
+                    uint32_t restore_prot = getProtection(restore);
+                    if(restore_prot && !(restore_prot & PROT_WRITE))
+                        mprotect((void*)restore, box64_pagesize, restore_prot & ~PROT_CUSTOM);
+                }
+                return;
+            }
+            need_restore = 1;
+        }
+    }
+
+    if(box64_is32bits) {
+        Elf32_Dyn* dyn = (Elf32_Dyn*)dyn_addr;
+        for(int j = 0; dyn[j].d_tag != DT_NULL; j++) {
+            if(isDynamicTagPointer(dyn[j].d_tag) && dyn[j].d_un.d_ptr) {
+                dyn[j].d_un.d_ptr += h->delta;
+            }
+        }
+    } else {
+        Elf64_Dyn* dyn = (Elf64_Dyn*)dyn_addr;
+        for(int j = 0; dyn[j].d_tag != DT_NULL; j++) {
+            if(isDynamicTagPointer(dyn[j].d_tag) && dyn[j].d_un.d_ptr) {
+                dyn[j].d_un.d_ptr += h->delta;
+            }
+        }
+    }
+
+    if(need_restore) {
+        for(uintptr_t page = page_addr; page < page_end; page += box64_pagesize) {
+            uint32_t old_prot = getProtection(page);
+            if(old_prot && !(old_prot & PROT_WRITE))
+                mprotect((void*)page, box64_pagesize, old_prot & ~PROT_CUSTOM);
+        }
+    }
+
+    h->dynamic_patched = 1;
 }
 
 typedef struct my_dl_phdr_info_s {
@@ -1775,31 +1927,47 @@ int ElfGetSymTabStartEnd(elfheader_t* head, uintptr_t *offs, uintptr_t *end, con
     return box64_is32bits?ElfGetSymTabStartEnd32(head, offs, end, symname):ElfGetSymTabStartEnd64(head, offs, end, symname);
 }
 
+int NeededLibs(elfheader_t* h)
+{
+    if(!h) return 0;
+    int cnt = 0;
+    // count the number of needed libs, and also grab soname
+    for (size_t i=0; i<h->numDynamic; ++i) {
+        int tag = box64_is32bits?h->Dynamic._32[i].d_tag:h->Dynamic._64[i].d_tag;
+        if(tag==DT_NEEDED)
+            ++cnt;
+    }
+    return cnt;
+}
+
 typedef struct search_symbol_s{
     const char* name;
-    void*       addr;
-    void*       lib;
+    void* addr;
 } search_symbol_t;
-int dl_iterate_phdr_findsymbol(struct dl_phdr_info* info, size_t size, void* data)
-{
-    search_symbol_t* s = (search_symbol_t*)data;
 
-    for(int j = 0; j<info->dlpi_phnum; ++j) {
-        if (info->dlpi_phdr[j].p_type == PT_DYNAMIC) {
-            ElfW(Sym)* sym = NULL;
-            ElfW(Word) sym_cnt = 0;
+int dl_iterate_phdr_findsymbol(eh_obj_t* obj, search_symbol_t* s)
+{
+    // special case for dlsym -- it's not a versionned symbol in libMangoHud_shim.so.
+    if (!fnmatch("*libMangoHud_shim.so*", obj->name, 0) && !strcmp(s->name, "dlsym")) {
+        eh_find_sym(obj, "dlsym", &s->addr);
+        eh_destroy_obj(obj);
+        return !!s->addr;
+    }
+
+    for (int j = 0; j < obj->phnum; ++j) {
+        if (obj->phdr[j].p_type == PT_DYNAMIC) {
             ElfW(Verdef)* verdef = NULL;
             ElfW(Word) verdef_cnt = 0;
-            char *strtab = NULL;
-            ElfW(Dyn)* dyn = (ElfW(Dyn)*)(info->dlpi_addr +  info->dlpi_phdr[j].p_vaddr); //Dynamic Section
+            char* strtab = NULL;
+            ElfW(Dyn)* dyn = (ElfW(Dyn)*)(obj->addr + obj->phdr[j].p_vaddr);
             // grab the needed info
-            while(dyn->d_tag != DT_NULL) {
-                switch(dyn->d_tag) {
+            while (dyn->d_tag != DT_NULL) {
+                switch (dyn->d_tag) {
                     case DT_STRTAB:
-                        strtab = (char *)(dyn->d_un.d_ptr);
+                        strtab = (char*)(dyn->d_un.d_ptr);
                         break;
                     case DT_VERDEF:
-                        verdef = (ElfW(Verdef)*)(info->dlpi_addr +  dyn->d_un.d_ptr);
+                        verdef = (ElfW(Verdef)*)(obj->addr + dyn->d_un.d_ptr);
                         break;
                     case DT_VERDEFNUM:
                         verdef_cnt = dyn->d_un.d_val;
@@ -1807,42 +1975,27 @@ int dl_iterate_phdr_findsymbol(struct dl_phdr_info* info, size_t size, void* dat
                 }
                 ++dyn;
             }
-            if(strtab && verdef && verdef_cnt) {
-                if((uintptr_t)strtab < (uintptr_t)info->dlpi_addr) // this test is need for linux-vdso on PI and some other OS (looks like a bug to me)
-                    strtab=(char*)((uintptr_t)strtab + info->dlpi_addr);
-                // Look fr all defined versions now
-                ElfW(Verdef)* v = verdef;
-                while(v) {
-                    ElfW(Verdaux)* vda = (ElfW(Verdaux)*)(((uintptr_t)v) + v->vd_aux);
-                    if(v->vd_version>0 && !v->vd_flags)
-                        for(int i=0; i<v->vd_cnt; ++i) {
-                            const char* vername = (strtab+vda->vda_name);
-                            if(vername && vername[0] && (s->addr = dlvsym(s->lib, s->name, vername))) {
-                                printf_log(/*LOG_DEBUG*/LOG_INFO, "Found symbol with version %s, value = %p\n", vername, s->addr);
-                                return 1;   // stop searching
-                            }
-                            vda = (ElfW(Verdaux)*)(((uintptr_t)vda) + vda->vda_next);
-                        }
-                    v = v->vd_next?(ElfW(Verdef)*)((uintptr_t)v + v->vd_next):NULL;
+
+            if (strtab && verdef && verdef_cnt) {
+                eh_find_sym(obj, s->name, &s->addr);
+                if (s->addr) {
+                    eh_destroy_obj(obj);
+                    return 1;
                 }
             }
         }
     }
+
+    eh_destroy_obj(obj);
     return 0;
 }
 
 void* GetNativeSymbolUnversioned(void* lib, const char* name)
 {
-    // try to find "name" in loaded elf, whithout checking for the symbol version (like dlsym, but no version check)
     search_symbol_t s;
     s.name = name;
     s.addr = NULL;
-    if(lib)
-        s.lib = lib;
-    else
-        s.lib = my_context->box64lib;
-    printf_log(LOG_INFO, "Look for %s in loaded elfs\n", name);
-    dl_iterate_phdr(dl_iterate_phdr_findsymbol, &s);
+    eh_iterate_obj((eh_iterate_obj_callback_func)dl_iterate_phdr_findsymbol, &s);
     return s.addr;
 }
 
@@ -1899,11 +2052,17 @@ EXPORT void PltResolver64(x64emu_t* emu)
             GetGlobalSymbolStartEnd(local_maplib, symname, &offs, &end, h, version, vername, veropt, (void**)&elfsym);
     }
     if (!offs) {
-        printf_log(LOG_NONE, "Error: PltResolver: Symbol %s %s(%sver %d: %s%s%s) not found, cannot apply R_X86_64_JUMP_SLOT %p (%p) in %s (local_maplib=%p, global maplib=%p, deepbind=%d)\n", (bind==STB_LOCAL)?"Local":((bind==STB_WEAK)?"Weak":""), symname, veropt?"opt":"", version, symname, vername?"@":"", vername?vername:"", p, *(void**)p, h->name, local_maplib, my_context->maplib, deepbind);
+        printf_log(LOG_NONE, "Error: PltResolver: Symbol %s %s(%sver %d: %s%s%s) not found, cannot apply R_X86_64_JUMP_SLOT %p in %s (local_maplib=%p, global maplib=%p, deepbind=%d)\n", (bind==STB_LOCAL)?"Local":((bind==STB_WEAK)?"Weak":""), symname, veropt?"opt":"", version, symname, vername?"@":"", vername?vername:"", p, (h && h->name)?h->name:"???", local_maplib, my_context->maplib, deepbind);
         emu->quit = 1;
+        R_RIP = 0; //stop....
         return;
     } else {
         elfheader_t* sym_elf = FindElfSymbol(my_context, elfsym);
+        if(elfsym && (elfsym->st_info&0xf)==STT_GNU_IFUNC) {
+            // this is an IFUNC, needs to evaluate the function first!
+            printf_dump(LOG_DEBUG, "            Indirect function, will call the resolver now at %p\n", (void*)offs);
+            offs = RunFunction(offs, 0);
+        }
         offs = (uintptr_t)getAlternate((void*)offs);
 
         if(p) {
@@ -1930,7 +2089,7 @@ const char* getAddrFunctionName(uintptr_t addr)
     elfheader_t* elf = FindElfAddress(my_context, addr);
     const char* symbname = FindNearestSymbolName(elf, (void*)addr, &start, &sz);
     if (!sz) sz = 0x100; // arbitrary value...
-    if (symbname && addr >= start && (addr < (start + sz) || !sz)) {
+    if (symbname && (addr >= start) && (addr < (start + sz))) {
         if (symbname[0] == '\0')
             sprintf(ret, "%s + 0x%lx + 0x%lx", ElfName(elf), start - (uintptr_t)GetBaseAddress(elf), addr - start);
         else if (addr == start)

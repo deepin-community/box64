@@ -263,11 +263,13 @@ static void initWrappedLib(library_t *lib, box64context_t* context) {
     for (int i=0; i<nb; ++i) {
         wrappedlib_t* w = box64_is32bits?(&wrappedlibs32[i]):(&wrappedlibs[i]);
         if(strcmp(lib->name, w->name)==0) {
-            if(w->init(lib, context)) {
-                // error!
-                const char* error_str = dlerror();
-                if(error_str)   // don't print the message if there is no error string from last error
-                    printf_log(LOG_NONE, "Error initializing native %s (last dlerror is %s)\n", lib->name, error_str);
+            int err = w->init(lib, context);
+            if (err) {
+                if (err == -1) {
+                    const char* error_str = dlerror();
+                    if (error_str) // don't print the message if there is no error string from last error
+                        printf_log(LOG_NONE, "Error initializing native %s (last dlerror is %s)\n", lib->name, error_str);
+                }
                 return; // non blocker...
             }
             printf_dump(LOG_INFO, "Using native(wrapped) %s\n", lib->name);
@@ -364,6 +366,11 @@ static int loadEmulatedLib(const char* libname, library_t *lib, box64context_t* 
             SET_BOX64ENV(dynarec_strongmem, 1);
             env_changed = 1;
         }
+        if(libname && BOX64ENV(unityplayer) && strstr(libname, "UnityPlayer.so")) {
+            printf_dump(LOG_INFO, "UnityPlayer detected, applying Unity settings\n");
+            SET_BOX64ENV(unity, 1);
+            env_changed = 1;
+        }
         if(libname && BOX64ENV(dynarec_tbb) && strstr(libname, "libtbb.so")) {
             printf_dump(LOG_INFO, "libtbb detected, enable Dynarec StrongMem\n");
             SET_BOX64ENV(dynarec_strongmem, 1);
@@ -375,6 +382,7 @@ static int loadEmulatedLib(const char* libname, library_t *lib, box64context_t* 
             printf_dump(LOG_INFO, "libjvm detected, disable Dynarec BigBlock and enable Dynarec StrongMem, hide SSE 4.2\n");
             SET_BOX64ENV(dynarec_bigblock, 0);
             SET_BOX64ENV(dynarec_strongmem, 1);
+            SET_BOX64ENV(dynarec_safeflags, 2); // for example, SlayTheSpire requires safeflags=2 on the REPZ SCASD opcode
             #else
             printf_dump(LOG_INFO, "libjvm detected, hide SSE 4.2\n");
             #endif
@@ -721,6 +729,18 @@ int IsSameLib(library_t* lib, const char* path)
         if(lib->type==LIB_EMULATED && lib->e.elf->path && !strcmp(lib->e.elf->path, rpath)) {
             ret=1;
         }
+        /**
+         * EasyAntiCheat would use memfd to create a library on the fly, the real path will be something like
+         *     /memfd:2a87dfdb-d3d2-f6db-46be-dabbbd (deleted)
+         * In this case, handle it by checking the original path.
+         */
+        if (strlen(rpath) >= strlen("/memfd:") && strncmp(rpath, "/memfd:", strlen("/memfd:")) == 0) {
+            if (!strcmp(path, lib->path))
+                ret = 1;
+            if (lib->type == LIB_EMULATED && lib->e.elf->path && !strcmp(lib->e.elf->path, path)) {
+                ret = 1;
+            }
+        }
     }
     if(!ret) {
         int n = NbDot(name);
@@ -878,8 +898,14 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
                 printf_log(LOG_NONE, "Warning, function %s not found\n", buff);
                 return 0;
             }
-            s->addr = AddBridge(lib->w.bridge, s->w, symbol, 0, name);
-            s->resolved = 1;
+            void* s2 = dlsym(lib->w.lib, name);
+            if(s2) {
+                s->addr = AddBridge2(lib->w.bridge, s->w, symbol, s2, 0, name);
+                // don't resolve the symbol here, it may change
+            } else {
+                s->addr = AddBridge(lib->w.bridge, s->w, symbol, 0, name);
+                s->resolved = 1;
+            }
         }
         *addr = s->addr;
         *size = sizeof(void*);
@@ -971,8 +997,14 @@ static int getSymbolInSymbolMaps(library_t*lib, const char* name, int noweak, ui
                     printf_log(LOG_NONE, "Warning, function %s not found\n", buff);
                     return 0;
                 }
+            void* s2 = dlsym(lib->w.lib, name);
+            if(s2) {
+                s->addr = AddBridge2(lib->w.bridge, s->w, symbol, s2, 0, name);
+                // don't resolve the symbol here, it may change
+            } else {
                 s->addr = AddBridge(lib->w.bridge, s->w, symbol, 0, name);
                 s->resolved = 1;
+            }
             }
             *addr = s->addr;
             *size = sizeof(void*);
@@ -1173,7 +1205,7 @@ void AddMainElfToLinkmap32(elfheader_t* elf)
 
     lm->l_addr = (Elf32_Addr)to_ptrv(GetElfDelta(elf));
     lm->l_name = to_cstring(my_context->fullpath);
-    lm->l_ld = to_ptrv(GetDynamicSection(elf));
+    lm->l_ld = to_ptrv(GetLoadedDynamicSection(elf));
 }
 #endif
 
@@ -1229,7 +1261,7 @@ void AddMainElfToLinkmap(elfheader_t* elf)
 
     lm->l_addr = (Elf64_Addr)GetElfDelta(elf);
     lm->l_name = my_context->fullpath;
-    lm->l_ld = GetDynamicSection(elf);
+    lm->l_ld = GetLoadedDynamicSection(elf);
 }
 
 needed_libs_t* new_neededlib(int n)

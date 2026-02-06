@@ -30,12 +30,12 @@ int IsBridgeSignature(char s, char c)
     return FALSE;
 }
 
-void* GetSeg43Base()
+void* GetSeg43Base(void* emu)
 {
     return NULL;
 }
 
-void* GetSegmentBase(uint32_t desc)
+void* GetSegmentBase(void* emu, uint32_t desc)
 {
     printf_log(LOG_NONE, "GetSegmentBase does not apply to Wine dlls\n");
     return NULL;
@@ -47,6 +47,11 @@ void* EmuFork(void* emu, int forktype) { return NULL; }
 void EmuX64Syscall(void* emu)
 {
     printf_log(LOG_NONE, "EmuX64Syscall NYI\n");
+}
+
+void EmuX64Syscall_linux(void* emu)
+{
+    printf_log(LOG_NONE, "EmuX64Syscall_linux NYI\n");
 }
 
 void EmuX86Syscall(void* emu)

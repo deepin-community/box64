@@ -105,7 +105,7 @@ uintptr_t dynarec64_AVX_66_0F38(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip
             if(!vex.l) YMM0(gd);
             break;
         case 0x04:
-            INST_NAME("PMADDUBSW Gx, Vx, Ex");
+            INST_NAME("VPMADDUBSW Gx, Vx, Ex");
             nextop = F8;
             q0 = fpu_get_scratch(dyn, ninst);
             q1 = fpu_get_scratch(dyn, ninst);
@@ -1385,14 +1385,14 @@ uintptr_t dynarec64_AVX_66_0F38(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip
                     VMOVQDto(x4, v2, i);
                     CBZw(x4, 4+4*4);
                     SMOVQSto(x4, v1, i+l*2);
-                    ADDx_REG_LSL(x4, ed, x4, wb1);
+                    ADDz_REG_LSL(x4, ed, x4, wb1);
                     VLD1_64(v0, i, x4);
                     VMOVQDfrom(v2, i, xZR);
                 } else for(int i=0; i<4; ++i) {
                     VMOVSto(x4, v2, i);
                     CBZw(x4, 4+4*4);
                     SMOVQSto(x4, v1, i);
-                    ADDx_REG_LSL(x4, ed, x4, wb1);
+                    ADDz_REG_LSL(x4, ed, x4, wb1);
                     VLD1_32(v0, i, x4);
                     VMOVQSfrom(v2, i, xZR);
                 }
@@ -1440,7 +1440,7 @@ uintptr_t dynarec64_AVX_66_0F38(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip
                     VMOVSto(x4, v2, i);
                     CBZw(x4, 4+4*4);
                     VMOVQDto(x4, (i&2)?q1:v1, i&1);
-                    ADDx_REG_LSL(x4, ed, x4, wb1);
+                    ADDz_REG_LSL(x4, ed, x4, wb1);
                     VLD1_32(v0, i, x4);
                     VMOVQSfrom(v2, i, xZR);
                 }
@@ -1465,7 +1465,7 @@ uintptr_t dynarec64_AVX_66_0F38(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip
                         VMOVQDto(x4, v2, i);
                         CBZw(x4, 4+4*4);
                         VMOVQDto(x4, v1, i);
-                        ADDx_REG_LSL(x4, ed, x4, wb1);
+                        ADDz_REG_LSL(x4, ed, x4, wb1);
                         VLD1_64(v0, i, x4);
                         VMOVQDfrom(v2, i, xZR);
                     }

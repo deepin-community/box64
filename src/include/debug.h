@@ -5,6 +5,7 @@
 
 #include "os.h"
 #include "hostext.h"
+#include "sysinfo.h"
 
 typedef struct box64context_s box64context_t;
 extern box64env_t box64env;
@@ -15,6 +16,7 @@ extern int box64_rdtsc;
 extern uint8_t box64_rdtsc_shift;
 extern int box64_is32bits;
 extern int box64_isAddressSpace32;
+extern int box64_nolibs;
 #ifdef DYNAREC
 extern cpu_ext_t cpuext;
 #endif
@@ -28,9 +30,11 @@ extern int box64_steamcmd;
 extern int box64_wine;
 extern int box64_musl;
 extern int box64_isglibc234; // is the program linked with glibc 2.34+
+extern int box64_unittest_mode;
 extern uintptr_t fmod_smc_start, fmod_smc_end; // to handle libfmod (from Unreal) SMC (self modifying code)
 extern uint32_t default_gs, default_fs;
 extern int box64_tcmalloc_minimal;  // when using tcmalloc_minimal
+extern sysinfo_t box64_sysinfo;
 #define LOG_NONE 0
 #define LOG_INFO 1
 #define LOG_DEBUG 2
@@ -94,7 +98,7 @@ void init_malloc_hook(void);
 #define box_strdup      strdup
 #define box_realpath    realpath
 #else
-extern size_t(*box_malloc_usable_size)(void*);
+extern size_t (*box_malloc_usable_size)(void*);
 extern void* __libc_malloc(size_t);
 extern void* __libc_realloc(void*, size_t);
 extern void* __libc_calloc(size_t, size_t);

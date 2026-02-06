@@ -199,7 +199,7 @@ uintptr_t dynarec64_F20F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
         case 0x51:
             INST_NAME("SQRTSD Gx, Ex");
             nextop = F8;
-            GETGX_empty(v0);
+            GETGX(v0, 1);
             d1 = fpu_get_scratch(dyn);
             GETEXSD(d0, 0, 0);
             FSQRT_D(d1, d0);
@@ -352,6 +352,18 @@ uintptr_t dynarec64_F20F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             VPICKOD_W(v1, q1, q0);
             VFSUB_S(q0, v0, v1);
             break;
+        case 0xAE:
+            nextop = F8;
+            switch ((nextop >> 3) & 7) {
+                case 6:
+                    INST_NAME("(unsupported) UWAIT Ed");
+                    FAKEED;
+                    UDF();
+                    break;
+                default:
+                    DEFAULT;
+            }
+            break;
         case 0xC2:
             INST_NAME("CMPSD Gx, Ex, Ib");
             nextop = F8;
@@ -392,13 +404,26 @@ uintptr_t dynarec64_F20F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             GETEXSD(v1, 0, 0);
             FMOV_D(v0, v1);
             break;
-        case 0xE6: // TODO: !fastround
+        case 0xE6:
             INST_NAME("CVTPD2DQ Gx, Ex");
             nextop = F8;
             GETEX(v1, 0, 0);
             GETGX_empty(v0);
             u8 = sse_setround(dyn, ninst, x1, x2);
-            VFTINT_W_D(v0, v1, v1);
+            if (BOX64ENV(dynarec_fastround)) {
+                VFTINT_W_D(v0, v1, v1);
+            } else {
+                d0 = fpu_get_scratch(dyn);
+                q0 = fpu_get_scratch(dyn);
+                q1 = fpu_get_scratch(dyn);
+                VFTINT_W_D(d0, v1, v1);
+                VLDI(q0, 0b1001110000000); // broadcast 32bit 0x80000000 to all
+                LU52I_D(x5, xZR, 0x41e);
+                VREPLGR2VR_D(q1, x5);
+                VFCMP_D(q1, q1, v1, cULE);
+                VSHUF4I_W(q1, q1, 0b00001000);
+                VBITSEL_V(v0, d0, q0, q1);
+            }
             x87_restoreround(dyn, ninst, u8);
             VINSGR2VR_D(v0, xZR, 1);
             break;

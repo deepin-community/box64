@@ -88,8 +88,9 @@ void* align_xcb_connection32(void* src)
         if(src==&i386_xcb_connects[i])
             dest = my_xcb_connects[i];
     #if 1
-    if(!dest)
+    if(!dest) {
         dest = temp_xcb_connection32(src);
+    }
     #else
     if(!dest) {
         printf_log(LOG_NONE, "Error, xcb_connect %p not found\n", src);

@@ -28,9 +28,9 @@
 #include "modrm.h"
 
 #ifdef TEST_INTERPRETER
-uintptr_t Test66(x64test_t *test, rex_t rex, uintptr_t addr)
+uintptr_t Test66(x64test_t *test, rex_t rex, uintptr_t addr, int *step)
 #else
-uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr)
+uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
 #endif
 {
     uint8_t opcode;
@@ -110,7 +110,6 @@ uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr)
             return 0;
         }
         emu->segs[_ES] = Pop16(emu);
-        emu->segs_serial[_ES] = 0;
         break;
 
     case 0x0F:                              /* more opcdes */
@@ -123,9 +122,9 @@ uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr)
                 #endif
             case 1:
                 #ifdef TEST_INTERPRETER
-                return Test66F20F(test, rex, addr);
+                return Test66F20F(test, rex, addr, step);
                 #else
-                return Run66F20F(emu, rex, addr);
+                return Run66F20F(emu, rex, addr, step);
                 #endif
             case 2:
                 #ifdef TEST_INTERPRETER
@@ -147,7 +146,6 @@ uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr)
                 return 0;
             }
             emu->segs[_DS] = Pop16(emu);    // no check, no use....
-            emu->segs_serial[_DS] = 0;
             break;
 
     case 0x39:
@@ -248,6 +246,13 @@ uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr)
         } else {
             return 0;
         }
+        break;
+
+    case 0x63:                      /* MOVSXD Gw,Ew */
+        nextop = F8;
+        GETEW(0);
+        GETGW;
+        GW->sword[0] = EW->sword[0];
         break;
 
     case 0x68:                       /* PUSH u16 */
@@ -399,13 +404,21 @@ uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr)
     case 0x8E:                               /* MOV Seg,Ew */
         nextop = F8;
         GETEW(0);
-        emu->segs[((nextop&0x38)>>3)] = EW->word[0];
-        emu->segs_serial[((nextop&0x38)>>3)] = 0;
+            tmp8u = (nextop&0x38)>>3;
+            if((tmp8u>5) || (tmp8u==1)) {
+                return 0;
+            }
+            emu->segs[tmp8u] = ED->word[0];
+            if(((tmp8u==_FS) || (tmp8u==_GS)) && emu->segs[tmp8u])
+                GetSegmentBaseEmu(emu, tmp8u);  // refresh segs_offs
+            /*if(tmp8u==_SS && tf)   // disable trace when SS is accessed
+                no_tf = 1;*/    //TODO?
         break;
     case 0x8F:                              /* POP Ew */
         nextop = F8;
+        tmp16u = Pop16(emu);    // to handle pop [RSP] stuffs
         GETEW(0);
-        EW->word[0] = Pop16(emu);
+        EW->word[0] = tmp16u;
         break;
     case 0x90:                      /* NOP or XCHG R8d, AX*/
     case 0x91:
@@ -716,8 +729,8 @@ uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr)
         GETEW(1);
         tmp8u = F8 /*& 0x1f*/;
         switch((nextop>>3)&7) {
-            case 0: EW->word[0] = rol16(emu, EW->word[0], tmp8u); break;
-            case 1: EW->word[0] = ror16(emu, EW->word[0], tmp8u); break;
+            case 0: tmp8u2=ACCESS_FLAG(F_OF); EW->word[0] = rol16(emu, EW->word[0], tmp8u); break;
+            case 1: tmp8u2=ACCESS_FLAG(F_OF); EW->word[0] = ror16(emu, EW->word[0], tmp8u); break;
             case 2: EW->word[0] = rcl16(emu, EW->word[0], tmp8u); break;
             case 3: EW->word[0] = rcr16(emu, EW->word[0], tmp8u); break;
             case 4:
@@ -725,6 +738,7 @@ uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr)
             case 5: EW->word[0] = shr16(emu, EW->word[0], tmp8u); break;
             case 7: EW->word[0] = sar16(emu, EW->word[0], tmp8u); break;
         }
+        if (!BOX64ENV(cputype) && ((nextop>>3)&7) <= 1 && ((tmp8u&0x1f)>1)) CONDITIONAL_SET_FLAG(tmp8u2, F_OF);
         break;
 
     case 0xC7:                              /* MOV Ew,Iw */
@@ -809,11 +823,24 @@ uintptr_t Run66(x64emu_t *emu, rex_t rex, uintptr_t addr)
             #endif
             break;
     case 0xE8:                              /* CALL Id */
-        tmp32s = F32S; // call is relative
+        tmp32s = (rex.is32bits)?F16S:F32S; // call is relative
         if(rex.is32bits)
             Push32(emu, addr);
         else
             Push64(emu, addr);
+        addr += tmp32s;
+        break;
+    case 0xE9:                      /* JMP Id */
+        tmp32s = (rex.is32bits)?(F16S):(F32S); // jmp is relative
+        if(rex.is32bits)
+            addr = (uint32_t)(addr+tmp32s);
+        else
+            addr += tmp32s;
+        addr = (uintptr_t)getAlternate((void*)addr);
+        break;
+
+    case 0xEB:                      /* JMP Ib */
+        tmp32s = F8S; // jump is relative
         addr += tmp32s;
         break;
 

@@ -298,8 +298,16 @@ EXPORT void* my_av_buffer_create(x64emu_t* emu, void* data, int size, void* f, v
     return my->av_buffer_create(data, size, find_free_Fct(f), opaque, flags);
 }
 
-#define PRE_INIT    \
-    if(BOX64ENV(nogtk)) \
-        return -1;
+// will allow wrapped lib if and only if libavformat.so.58 && libavcodec.so.58 are also available!
+#define PRE_INIT \
+    if (BOX64ENV(nogtk)) return -2;                                     \
+    {                                                                   \
+        void* h = dlopen("libavformat.so.58", RTLD_LAZY | RTLD_GLOBAL); \
+        if(!h) return -2;                                               \
+        else dlclose(h);                                                \
+        h = dlopen("libavcodec.so.58", RTLD_LAZY | RTLD_GLOBAL);        \
+        if(!h) return -2;                                               \
+        else dlclose(h);                                                \
+    }
 
 #include "wrappedlib_init.h"

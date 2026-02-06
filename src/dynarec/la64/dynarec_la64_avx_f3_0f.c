@@ -51,8 +51,11 @@ uintptr_t dynarec64_AVX_F3_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip,
                 GETVYx(q1, 0);
                 GETEYSS(q2, 0, 0);
                 GETGYx_empty(q0);
-                if (gd != vex.v) VOR_V(q0, q1, q1);
-                VEXTRINS_W(q0, q2, 0);
+                if (q0 != q2) VEXTRINS_W(q0, q2, 0b00000);
+                if (q0 != q1) {
+                    VEXTRINS_D(q0, q1, 0b10001);
+                    VEXTRINS_W(q0, q1, 0b10001);
+                }
             } else {
                 GETEYSS(q2, 0, 0);
                 GETGYx_empty(q0);
@@ -65,14 +68,12 @@ uintptr_t dynarec64_AVX_F3_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip,
             nextop = F8;
             GETGYx(q2, 0);
             if (MODREG) {
-                if (ed == vex.v) {
-                    GETEYSS(q0, 1, 0);
-                    VEXTRINS_W(q0, q2, 0);
-                } else {
-                    GETVYx(q1, 0);
-                    GETEYSS(q0, 1, 0);
-                    VOR_V(q0, q1, q1);
-                    VEXTRINS_W(q0, q2, 0);
+                GETVYx(q1, 0);
+                GETEYSD(q0, 1, 0);
+                if (q0 != q2) VEXTRINS_W(q0, q2, 0b00000);
+                if (q0 != q1) {
+                    VEXTRINS_D(q0, q1, 0b10001);
+                    VEXTRINS_W(q0, q1, 0b10001);
                 }
             } else {
                 addr = geted(dyn, addr, ninst, nextop, &ed, x2, x1, &fixedaddress, rex, NULL, 1, 0);
@@ -476,21 +477,23 @@ uintptr_t dynarec64_AVX_F3_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip,
                 case 0x0e: VFCMP_S(q0, v2, v1, cLT); break;  // Greater ordered
                 case 0x0f: VSEQ_B(q0, v1, v1); break;        // true
             }
-            XVXOR_V(v0, v0, v0);
             XVPERMI_Q(v0, v1, XVPERMI_IMM_4_0(3, 0));
             XVINSVE0_W(v0, q0, 0);
-            YMM_UNMARK_UPPER_ZERO(v0);
             break;
         case 0xE6:
-            INST_NAME("CVTDQ2PD Gx, Ex");
+            INST_NAME("VCVTDQ2PD Gx, Ex");
             nextop = F8;
             d0 = fpu_get_scratch(dyn);
             if(vex.l){
                 GETEYx(v1, 0, 0);
                 GETGYy_empty(v0);
-                XVFFINTL_D_W(v0, v1);
-                XVFFINTH_D_W(d0, v1);
-                XVPERMI_Q(v0, d0, XVPERMI_IMM_4_0(0, 2));
+                /*  
+                    xvffintl.d.w  convert [v0,v1,v2,v3,v4,v5,v6,v7] to [v0,v1,v4,v5]
+                    xvffinth.d.w  convert [v0,v1,v2,v3,v4,v5,v6,v7] to [v2,v3,v6,v7]
+                    so user xvpermi.d to reorder input [v0v1,v2v3,v4v5,v6v7] to [v0v1,v4v5,v2v3,v6v7]
+                */
+                XVPERMI_D(d0, v1, 0b11011000);
+                XVFFINTL_D_W(v0, d0);
             }else{
                 GETEYSD(v1, 0, 0);
                 GETGYx_empty(v0);

@@ -25,6 +25,7 @@
 #include "wine/compiler.h"
 #include "wine/debug.h"
 #include "hostext.h"
+#include "sysinfo.h"
 
 uintptr_t box64_pagesize = 4096;
 
@@ -34,7 +35,9 @@ uint32_t default_fs = 0;
 int box64_rdtsc = 0;
 uint8_t box64_rdtsc_shift = 0;
 int box64_is32bits = 0;
+int box64_unittest_mode = 0;
 int box64_wine = 0; // this is for the emulated x86 Wine.
+sysinfo_t box64_sysinfo = {0};
 
 static uint32_t x86emu_parity_tab[8] = {
     0x96696996,
@@ -70,6 +73,12 @@ static const UINT_PTR page_mask = 0xfff;
 #define WOW64_TLS_EMU           (WOW64_TLS_MAX_NUMBER - 2)
 
 int is_addr_unaligned(uintptr_t addr)
+{
+    // FIXME
+    return 0;
+}
+
+int is_addr_autosmc(uintptr_t addr)
 {
     // FIXME
     return 0;
@@ -232,11 +241,12 @@ NTSTATUS WINAPI BTCpuProcessInit(void)
 
 #define STATIC_ASSERT(COND, MSG) typedef char static_assertion_##MSG[(!!(COND)) * 2 - 1]
     /* otherwise adjust arm64_epilog.S and arm64_next.S */
-    STATIC_ASSERT(offsetof(x64emu_t, win64_teb) == 3120, offset_of_b_must_be_4);
+    STATIC_ASSERT(offsetof(x64emu_t, win64_teb) == 3104, offset_of_b_must_be_4);
 #undef STATIC_ASSERT
 
     LoadEnvVariables();
     InitializeEnvFiles();
+    InitializeSystemInfo();
 
     if (!BOX64ENV(nobanner)) PrintBox64Version(1);
     if (DetectHostCpuFeatures())
